@@ -147,7 +147,7 @@ const corners = [-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1];
 
 function createLShape() {
   const lBodies = [];
-  const particleSpacing = bodyRadius * 2.2;
+  const spacing = bodyRadius * 2.2;
   const centerX = canvas.width / 2;
   const centerY = canvas.height / 2;
   
@@ -155,17 +155,50 @@ function createLShape() {
   const baseWidth = 10;
   const serifSize = 3;
   
-  const stemX = centerX - (baseWidth / 2) * particleSpacing;
+  const stemX = centerX - (baseWidth / 2) * spacing;
+  const stemTopY = centerY - (stemHeight / 2) * spacing;
+  const stemBottomY = centerY + (stemHeight / 2) * spacing;
+  const baseEndX = stemX + baseWidth * spacing;
   
+  // Vertical stem
   for (let i = 0; i < stemHeight; i++) {
-    const body = Bodies.circle(
-      stemX,
-      centerY - (i - stemHeight / 2) * particleSpacing,
-      bodyRadius,
-      { isStatic: true }
-    );
+    const y = stemTopY + i * spacing;
+    const body = Bodies.circle(stemX, y, bodyRadius, { isStatic: true });
     lBodies.push(body);
   }
+  
+  // Horizontal base
+  for (let i = 1; i <= baseWidth; i++) {
+    const x = stemX + i * spacing;
+    const body = Bodies.circle(x, stemBottomY, bodyRadius, { isStatic: true });
+    lBodies.push(body);
+  }
+  
+  // Top serifs (horizontal, one end at stem, extending left and right)
+  for (let i = 1; i <= serifSize; i++) {
+    const body1 = Bodies.circle(stemX - i * spacing, stemTopY, bodyRadius, { isStatic: true });
+    lBodies.push(body1);
+    const body2 = Bodies.circle(stemX + i * spacing, stemTopY, bodyRadius, { isStatic: true });
+    lBodies.push(body2);
+  }
+  
+  // Bottom serif (horizontal, at bottom of stem, right end at stem, extending left)
+  for (let i = 1; i <= serifSize; i++) {
+    const body = Bodies.circle(stemX - i * spacing, stemBottomY, bodyRadius, { isStatic: true });
+    lBodies.push(body);
+  }
+  
+  // End serif (vertical, at end of base, extending above and below)
+  for (let i = 1; i <= serifSize; i++) {
+    const body1 = Bodies.circle(baseEndX, stemBottomY - i * spacing, bodyRadius, { isStatic: true });
+    lBodies.push(body1);
+    const body2 = Bodies.circle(baseEndX, stemBottomY + i * spacing, bodyRadius, { isStatic: true });
+    lBodies.push(body2);
+  }
+  
+  Composite.add(world, lBodies);
+  return lBodies;
+}
   
   for (let i = 0; i < baseWidth; i++) {
     const body = Bodies.circle(
