@@ -188,12 +188,10 @@ function createLShape() {
     lBodies.push(body);
   }
   
-  // End serif (vertical, at end of base, extending above and below)
+  // End serif (vertical, at end of base, extending above only)
   for (let i = 1; i <= serifSize; i++) {
-    const body1 = Bodies.circle(baseEndX, stemBottomY - i * spacing, bodyRadius, { isStatic: true });
-    lBodies.push(body1);
-    const body2 = Bodies.circle(baseEndX, stemBottomY + i * spacing, bodyRadius, { isStatic: true });
-    lBodies.push(body2);
+    const body = Bodies.circle(baseEndX, stemBottomY - i * spacing, bodyRadius, { isStatic: true });
+    lBodies.push(body);
   }
   
   Composite.add(world, lBodies);
