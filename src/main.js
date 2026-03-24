@@ -199,41 +199,6 @@ function createLShape() {
   Composite.add(world, lBodies);
   return lBodies;
 }
-  
-  for (let i = 0; i < baseWidth; i++) {
-    const body = Bodies.circle(
-      stemX + (i + 1) * particleSpacing,
-      centerY + (stemHeight / 2) * particleSpacing,
-      bodyRadius,
-      { isStatic: true }
-    );
-    lBodies.push(body);
-  }
-  
-  for (let i = 1; i <= serifSize; i++) {
-    const body = Bodies.circle(stemX - i * particleSpacing, centerY - (stemHeight / 2 + 1) * particleSpacing, bodyRadius, { isStatic: true });
-    lBodies.push(body);
-    const body2 = Bodies.circle(stemX + i * particleSpacing, centerY - (stemHeight / 2 + 1) * particleSpacing, bodyRadius, { isStatic: true });
-    lBodies.push(body2);
-  }
-  
-  for (let i = 1; i <= serifSize; i++) {
-    const body = Bodies.circle(stemX - i * particleSpacing, centerY + (stemHeight / 2 + 1) * particleSpacing, bodyRadius, { isStatic: true });
-    lBodies.push(body);
-    const body2 = Bodies.circle(stemX + i * particleSpacing, centerY + (stemHeight / 2 + 1) * particleSpacing, bodyRadius, { isStatic: true });
-    lBodies.push(body2);
-  }
-  
-  for (let i = 1; i <= serifSize; i++) {
-    const body = Bodies.circle(stemX + (baseWidth + i) * particleSpacing, centerY + (stemHeight / 2 + 1) * particleSpacing, bodyRadius, { isStatic: true });
-    lBodies.push(body);
-    const body2 = Bodies.circle(stemX + (baseWidth + i) * particleSpacing, centerY + (stemHeight / 2 - 1) * particleSpacing, bodyRadius, { isStatic: true });
-    lBodies.push(body2);
-  }
-  
-  Composite.add(world, lBodies);
-  return lBodies;
-}
 
 const framebuffer = gl.createFramebuffer();
 const accumTexture = gl.createTexture();
