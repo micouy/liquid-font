@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>liquid-font</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0a0a0f; overflow: hidden; }
+    canvas { display: block; }
+    #controls {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      background: rgba(0,0,0,0.8);
+      padding: 15px;
+      border-radius: 8px;
+      color: #fff;
+      font-family: monospace;
+      font-size: 12px;
+      z-index: 1000;
+    }
+    #controls label { display: block; margin: 8px 0; }
+    #controls input { width: 150px; }
+    #controls span { display: inline-block; width: 60px; }
+  </style>
+</head>
+<body>
+  <div id="controls">
+    <label><span>Cohesion:</span><input type="range" id="cohesion" min="0" max="10" step="0.5" value="3"><span id="cohesionVal">3</span></label>
+    <label><span>Repulsion:</span><input type="range" id="repulsion" min="0" max="20" step="1" value="10"><span id="repulsionVal">10</span></label>
+    <label><span>Cursor:</span><input type="range" id="cursorForce" min="3" max="25" step="0.5" value="12"><span id="cursorVal">12</span></label>
+    <label><span>Radius:</span><input type="range" id="radius" min="0.01" max="1.5" step="0.01" value="1.1"><span id="radiusVal">1.1</span></label>
+    <label><span>Threshold:</span><input type="range" id="threshold" min="0.01" max="0.5" step="0.01" value="0.1"><span id="thresholdVal">0.1</span></label>
+    <label><span>Power:</span><input type="range" id="power" min="0.5" max="4" step="0.1" value="2"><span id="powerVal">2</span></label>
+    <label><span>Influence:</span><input type="range" id="influence" min="10" max="200" step="5" value="50"><span id="influenceVal">50</span></label>
+  </div>
+  <canvas id="canvas"></canvas>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

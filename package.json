@@ -1,0 +1,16 @@
+{
+  "name": "liquid-font",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 4820",
+    "build": "vite build",
+    "preview": "vite preview --port 4820"
+  },
+  "dependencies": {
+    "matter-js": "^0.19.0"
+  },
+  "devDependencies": {
+    "vite": "^5.4.2"
+  }
+}
