@@ -297,8 +297,9 @@ Composite.add(world, walls);
 
 const mouse = { x: 0, y: 0, down: false };
 canvas.addEventListener('mousemove', (e) => {
-  mouse.x = e.clientX;
-  mouse.y = e.clientY;
+  const dpr = window.devicePixelRatio || 1;
+  mouse.x = e.clientX * dpr;
+  mouse.y = e.clientY * dpr;
 });
 canvas.addEventListener('mousedown', () => { mouse.down = true; });
 canvas.addEventListener('mouseup', () => { mouse.down = false; });
