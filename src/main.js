@@ -12,6 +12,11 @@ gl.enable(gl.BLEND);
 gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
 const NUM_BODIES = 300;
+const bodyRadius = 4;
+
+const engine = Engine.create();
+engine.world.gravity.y = 3;
+const world = engine.world;
 
 const vertexShaderSource = `
   attribute vec2 a_corner;
@@ -36,6 +41,7 @@ const fragmentShaderSource = `
   uniform float u_radius;
   uniform float u_power;
   uniform vec2 u_resolution;
+  uniform vec3 u_color;
   
   void main() {
     vec2 uv = gl_FragCoord.xy;
@@ -44,7 +50,7 @@ const fragmentShaderSource = `
     float dy = uv.y - flippedPos.y;
     float dist = sqrt(dx * dx + dy * dy);
     float val = u_radius / pow(dist, u_power);
-    gl_FragColor = vec4(0.0, 0.0, 0.0, val);
+    gl_FragColor = vec4(u_color, val);
   }
 `;
 
@@ -111,6 +117,7 @@ const resolutionLocation = gl.getUniformLocation(program, 'u_resolution');
 const influenceLocation = gl.getUniformLocation(program, 'u_influence');
 const radiusLocation = gl.getUniformLocation(program, 'u_radius');
 const powerLocation = gl.getUniformLocation(program, 'u_power');
+const colorLocation = gl.getUniformLocation(program, 'u_color');
 
 const threshPosLocation = gl.getAttribLocation(threshProgram, 'a_position');
 const threshAccumLocation = gl.getUniformLocation(threshProgram, 'u_accum');
@@ -128,17 +135,61 @@ const vertexBuffer = gl.createBuffer();
 const vertices = new Float32Array(NUM_BODIES * 6 * 4);
 const corners = [-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1];
 
-function updateVertices() {
-  let idx = 0;
-  for (let i = 0; i < NUM_BODIES; i++) {
-    const pos = bodies[i].position;
-    for (let j = 0; j < 6; j++) {
-      vertices[idx++] = corners[j * 2];
-      vertices[idx++] = corners[j * 2 + 1];
-      vertices[idx++] = pos.x;
-      vertices[idx++] = pos.y;
-    }
+function createLShape() {
+  const lBodies = [];
+  const particleSpacing = bodyRadius * 2.2;
+  const centerX = canvas.width / 2;
+  const centerY = canvas.height / 2;
+  
+  const stemHeight = 20;
+  const baseWidth = 10;
+  const serifSize = 3;
+  
+  const stemX = centerX - (baseWidth / 2) * particleSpacing;
+  
+  for (let i = 0; i < stemHeight; i++) {
+    const body = Bodies.circle(
+      stemX,
+      centerY - (i - stemHeight / 2) * particleSpacing,
+      bodyRadius,
+      { isStatic: true }
+    );
+    lBodies.push(body);
   }
+  
+  for (let i = 0; i < baseWidth; i++) {
+    const body = Bodies.circle(
+      stemX + (i + 1) * particleSpacing,
+      centerY + (stemHeight / 2) * particleSpacing,
+      bodyRadius,
+      { isStatic: true }
+    );
+    lBodies.push(body);
+  }
+  
+  for (let i = 1; i <= serifSize; i++) {
+    const body = Bodies.circle(stemX - i * particleSpacing, centerY - (stemHeight / 2 + 1) * particleSpacing, bodyRadius, { isStatic: true });
+    lBodies.push(body);
+    const body2 = Bodies.circle(stemX + i * particleSpacing, centerY - (stemHeight / 2 + 1) * particleSpacing, bodyRadius, { isStatic: true });
+    lBodies.push(body2);
+  }
+  
+  for (let i = 1; i <= serifSize; i++) {
+    const body = Bodies.circle(stemX - i * particleSpacing, centerY + (stemHeight / 2 + 1) * particleSpacing, bodyRadius, { isStatic: true });
+    lBodies.push(body);
+    const body2 = Bodies.circle(stemX + i * particleSpacing, centerY + (stemHeight / 2 + 1) * particleSpacing, bodyRadius, { isStatic: true });
+    lBodies.push(body2);
+  }
+  
+  for (let i = 1; i <= serifSize; i++) {
+    const body = Bodies.circle(stemX + (baseWidth + i) * particleSpacing, centerY + (stemHeight / 2 + 1) * particleSpacing, bodyRadius, { isStatic: true });
+    lBodies.push(body);
+    const body2 = Bodies.circle(stemX + (baseWidth + i) * particleSpacing, centerY + (stemHeight / 2 - 1) * particleSpacing, bodyRadius, { isStatic: true });
+    lBodies.push(body2);
+  }
+  
+  Composite.add(world, lBodies);
+  return lBodies;
 }
 
 const framebuffer = gl.createFramebuffer();
@@ -150,12 +201,9 @@ gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
 gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, canvas.width, canvas.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
 
-const engine = Engine.create();
-engine.world.gravity.y = 3;
-const world = engine.world;
+const lVertexBuffer = gl.createBuffer();
 
 const bodies = [];
-const bodyRadius = 4;
 
 for (let i = 0; i < NUM_BODIES; i++) {
   const body = Bodies.circle(
@@ -173,12 +221,15 @@ for (let i = 0; i < NUM_BODIES; i++) {
   Composite.add(world, body);
 }
 
+const lBodies = createLShape();
+
 const cohesionDistance = bodyRadius * 6;
 const repulsionDistance = bodyRadius * 2.5;
 
 const params = {
   cohesion: 3,
   repulsion: 10,
+  adhesive: 5,
   cursorForce: 12,
   radius: 1.1,
   threshold: 0.1,
@@ -193,6 +244,10 @@ document.getElementById('cohesion').addEventListener('input', (e) => {
 document.getElementById('repulsion').addEventListener('input', (e) => {
   params.repulsion = parseFloat(e.target.value);
   document.getElementById('repulsionVal').textContent = params.repulsion;
+});
+document.getElementById('adhesive').addEventListener('input', (e) => {
+  params.adhesive = parseFloat(e.target.value);
+  document.getElementById('adhesiveVal').textContent = params.adhesive;
 });
 document.getElementById('cursorForce').addEventListener('input', (e) => {
   params.cursorForce = parseFloat(e.target.value);
@@ -228,6 +283,34 @@ canvas.addEventListener('mousemove', (e) => {
   mouse.y = e.clientY;
 });
 
+function updateVertices() {
+  let idx = 0;
+  for (let i = 0; i < bodies.length; i++) {
+    const pos = bodies[i].position;
+    for (let j = 0; j < 6; j++) {
+      vertices[idx++] = corners[j * 2];
+      vertices[idx++] = corners[j * 2 + 1];
+      vertices[idx++] = pos.x;
+      vertices[idx++] = pos.y;
+    }
+  }
+}
+
+function updateLVertices() {
+  const lVerts = new Float32Array(lBodies.length * 6 * 4);
+  let idx = 0;
+  for (let i = 0; i < lBodies.length; i++) {
+    const pos = lBodies[i].position;
+    for (let j = 0; j < 6; j++) {
+      lVerts[idx++] = corners[j * 2];
+      lVerts[idx++] = corners[j * 2 + 1];
+      lVerts[idx++] = pos.x;
+      lVerts[idx++] = pos.y;
+    }
+  }
+  return lVerts;
+}
+
 function render() {
   Engine.update(engine, 1000 / 60);
 
@@ -262,11 +345,24 @@ function render() {
         }
       }
     }
+    
+    for (let j = 0; j < lBodies.length; j++) {
+      const dx = lBodies[j].position.x - bodies[i].position.x;
+      const dy = lBodies[j].position.y - bodies[i].position.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      
+      if (dist > bodyRadius && dist < cohesionDistance) {
+        const nx = dx / dist;
+        const ny = dy / dist;
+        const adhesive = params.adhesive * 0.00001 / dist;
+        Body.applyForce(bodies[i], bodies[i].position, { x: nx * adhesive, y: ny * adhesive });
+      }
+    }
   }
 
   updateVertices();
+  const lVerts = updateLVertices();
 
-  // Render to framebuffer
   gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
   gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, accumTexture, 0);
   gl.viewport(0, 0, canvas.width, canvas.height);
@@ -274,23 +370,31 @@ function render() {
   gl.clear(gl.COLOR_BUFFER_BIT);
 
   gl.useProgram(program);
-  gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
-  gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW);
-  
   gl.enableVertexAttribArray(cornerLocation);
-  gl.vertexAttribPointer(cornerLocation, 2, gl.FLOAT, false, 16, 0);
   gl.enableVertexAttribArray(posLocation);
-  gl.vertexAttribPointer(posLocation, 2, gl.FLOAT, false, 16, 8);
   
   gl.uniform2f(resolutionLocation, canvas.width, canvas.height);
   gl.uniform1f(influenceLocation, params.influence);
   gl.uniform1f(radiusLocation, params.radius);
   gl.uniform1f(powerLocation, params.power);
   
+  gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW);
+  gl.vertexAttribPointer(cornerLocation, 2, gl.FLOAT, false, 16, 0);
+  gl.vertexAttribPointer(posLocation, 2, gl.FLOAT, false, 16, 8);
+  
+  gl.uniform3f(colorLocation, 0, 0, 0);
   gl.blendFunc(gl.ONE, gl.ONE);
   gl.drawArrays(gl.TRIANGLES, 0, NUM_BODIES * 6);
+  
+  gl.bindBuffer(gl.ARRAY_BUFFER, lVertexBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, lVerts, gl.DYNAMIC_DRAW);
+  gl.vertexAttribPointer(cornerLocation, 2, gl.FLOAT, false, 16, 0);
+  gl.vertexAttribPointer(posLocation, 2, gl.FLOAT, false, 16, 8);
+  
+  gl.uniform3f(colorLocation, 1, 0, 0);
+  gl.drawArrays(gl.TRIANGLES, 0, lBodies.length * 6);
 
-  // Render to screen
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   gl.viewport(0, 0, canvas.width, canvas.height);
   gl.clearColor(1.0, 1.0, 1.0, 1.0);
