@@ -69,9 +69,10 @@ const thresholdFragmentShader = `
   
   void main() {
     vec2 uv = gl_FragCoord.xy / u_resolution;
-    float val = texture2D(u_accum, uv).a;
+    vec4 tex = texture2D(u_accum, uv);
+    float val = tex.a;
     if (val > u_threshold) {
-      gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+      gl_FragColor = vec4(tex.rgb, 1.0);
     } else {
       discard;
     }
