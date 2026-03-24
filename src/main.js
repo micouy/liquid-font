@@ -147,13 +147,13 @@ const corners = [-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1];
 
 function createLShape() {
   const lBodies = [];
-  const spacing = bodyRadius * 2.2;
+  const spacing = bodyRadius * 1.5;
   const centerX = canvas.width / 2;
   const centerY = canvas.height / 2;
   
-  const stemHeight = 20;
-  const baseWidth = 10;
-  const serifSize = 3;
+  const stemHeight = 30;
+  const baseWidth = 15;
+  const serifSize = 5;
   
   const stemX = centerX - (baseWidth / 2) * spacing;
   const stemTopY = centerY - (stemHeight / 2) * spacing;
