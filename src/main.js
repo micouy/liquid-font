@@ -64,17 +64,25 @@ const thresholdVertexShader = `
 const thresholdFragmentShader = `
   precision highp float;
   uniform sampler2D u_accum;
+  uniform sampler2D u_laccum;
   uniform float u_threshold;
   uniform vec2 u_resolution;
   
   void main() {
     vec2 uv = gl_FragCoord.xy / u_resolution;
-    vec4 tex = texture2D(u_accum, uv);
-    float val = tex.a;
-    if (val > u_threshold) {
-      gl_FragColor = vec4(tex.rgb, 1.0);
-    } else {
+    vec4 liquid = texture2D(u_accum, uv);
+    vec4 lshape = texture2D(u_laccum, uv);
+    float liquidAlpha = liquid.a;
+    float lshapeAlpha = lshape.a;
+    
+    if (liquidAlpha <= u_threshold && lshapeAlpha <= u_threshold) {
       discard;
+    }
+    
+    if (lshapeAlpha > liquidAlpha) {
+      gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0);
+    } else {
+      gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
     }
   }
 `;
@@ -122,6 +130,7 @@ const colorLocation = gl.getUniformLocation(program, 'u_color');
 
 const threshPosLocation = gl.getAttribLocation(threshProgram, 'a_position');
 const threshAccumLocation = gl.getUniformLocation(threshProgram, 'u_accum');
+const threshLAccumLocation = gl.getUniformLocation(threshProgram, 'u_laccum');
 const threshThreshLocation = gl.getUniformLocation(threshProgram, 'u_threshold');
 const threshResLocation = gl.getUniformLocation(threshProgram, 'u_resolution');
 
@@ -196,6 +205,15 @@ function createLShape() {
 const framebuffer = gl.createFramebuffer();
 const accumTexture = gl.createTexture();
 gl.bindTexture(gl.TEXTURE_2D, accumTexture);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, canvas.width, canvas.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+
+const lFrameBuffer = gl.createFramebuffer();
+const lAccumTexture = gl.createTexture();
+gl.bindTexture(gl.TEXTURE_2D, lAccumTexture);
 gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
 gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
 gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
@@ -364,6 +382,7 @@ function render() {
   updateVertices();
   const lVerts = updateLVertices();
 
+  // Render liquid particles to first framebuffer
   gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
   gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, accumTexture, 0);
   gl.viewport(0, 0, canvas.width, canvas.height);
@@ -378,15 +397,22 @@ function render() {
   gl.uniform1f(influenceLocation, params.influence);
   gl.uniform1f(radiusLocation, params.radius);
   gl.uniform1f(powerLocation, params.power);
+  gl.uniform3f(colorLocation, 0, 0, 0);
   
   gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
   gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW);
   gl.vertexAttribPointer(cornerLocation, 2, gl.FLOAT, false, 16, 0);
   gl.vertexAttribPointer(posLocation, 2, gl.FLOAT, false, 16, 8);
   
-  gl.uniform3f(colorLocation, 0, 0, 0);
   gl.blendFunc(gl.ONE, gl.ONE);
   gl.drawArrays(gl.TRIANGLES, 0, NUM_BODIES * 6);
+  
+  // Render L-shape particles to second framebuffer
+  gl.bindFramebuffer(gl.FRAMEBUFFER, lFrameBuffer);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, lAccumTexture, 0);
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.clearColor(0, 0, 0, 0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
   
   gl.bindBuffer(gl.ARRAY_BUFFER, lVertexBuffer);
   gl.bufferData(gl.ARRAY_BUFFER, lVerts, gl.DYNAMIC_DRAW);
@@ -396,6 +422,7 @@ function render() {
   gl.uniform3f(colorLocation, 1, 0, 0);
   gl.drawArrays(gl.TRIANGLES, 0, lBodies.length * 6);
 
+  // Render to screen
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   gl.viewport(0, 0, canvas.width, canvas.height);
   gl.clearColor(1.0, 1.0, 1.0, 1.0);
@@ -409,6 +436,11 @@ function render() {
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, accumTexture);
   gl.uniform1i(threshAccumLocation, 0);
+  
+  gl.activeTexture(gl.TEXTURE1);
+  gl.bindTexture(gl.TEXTURE_2D, lAccumTexture);
+  gl.uniform1i(threshLAccumLocation, 1);
+  
   gl.uniform1f(threshThreshLocation, params.threshold);
   gl.uniform2f(threshResLocation, canvas.width, canvas.height);
   
@@ -423,6 +455,8 @@ window.addEventListener('resize', () => {
   canvas.height = window.innerHeight;
   gl.viewport(0, 0, canvas.width, canvas.height);
   gl.bindTexture(gl.TEXTURE_2D, accumTexture);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, canvas.width, canvas.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+  gl.bindTexture(gl.TEXTURE_2D, lAccumTexture);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, canvas.width, canvas.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
 });
 
