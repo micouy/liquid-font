@@ -11,7 +11,7 @@ gl.viewport(0, 0, canvas.width, canvas.height);
 gl.enable(gl.BLEND);
 gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
-const NUM_BODIES = 1500;
+const NUM_BODIES = 300;
 
 const vertexShaderSource = `
   attribute vec2 a_corner;
@@ -155,7 +155,7 @@ engine.world.gravity.y = 3;
 const world = engine.world;
 
 const bodies = [];
-const bodyRadius = 0.8;
+const bodyRadius = 4;
 
 for (let i = 0; i < NUM_BODIES; i++) {
   const body = Bodies.circle(
