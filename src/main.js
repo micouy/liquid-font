@@ -292,11 +292,13 @@ const walls = [
 ];
 Composite.add(world, walls);
 
-const mouse = { x: 0, y: 0 };
+const mouse = { x: 0, y: 0, down: false };
 canvas.addEventListener('mousemove', (e) => {
   mouse.x = e.clientX;
   mouse.y = e.clientY;
 });
+canvas.addEventListener('mousedown', () => { mouse.down = true; });
+canvas.addEventListener('mouseup', () => { mouse.down = false; });
 
 function updateVertices() {
   let idx = 0;
@@ -333,7 +335,7 @@ function render() {
     const dx = mouse.x - body.position.x;
     const dy = mouse.y - body.position.y;
     const dist = Math.sqrt(dx * dx + dy * dy);
-    if (dist < 100) {
+    if (dist < 100 && !mouse.down) {
       const force = 0.00000001 * params.cursorForce * (100 - dist);
       Body.applyForce(body, body.position, { x: dx * force, y: dy * force });
     }
