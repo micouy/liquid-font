@@ -356,7 +356,7 @@ function render() {
           Body.applyForce(bodies[i], bodies[i].position, { x: -nx * repulsion, y: -ny * repulsion });
           Body.applyForce(bodies[j], bodies[j].position, { x: nx * repulsion, y: ny * repulsion });
         } else {
-          const cohesion = params.cohesion * 0.00001 / dist;
+          const cohesion = params.cohesion * 0.0001 / dist;
           Body.applyForce(bodies[i], bodies[i].position, { x: nx * cohesion, y: ny * cohesion });
           Body.applyForce(bodies[j], bodies[j].position, { x: -nx * cohesion, y: -ny * cohesion });
         }
@@ -371,7 +371,7 @@ function render() {
       if (dist > bodyRadius && dist < cohesionDistance) {
         const nx = dx / dist;
         const ny = dy / dist;
-        const adhesive = params.adhesive * 0.00001 / dist;
+        const adhesive = params.adhesive * 0.0001 / dist;
         Body.applyForce(bodies[i], bodies[i].position, { x: nx * adhesive, y: ny * adhesive });
       }
     }
