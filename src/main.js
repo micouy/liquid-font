@@ -222,6 +222,8 @@ gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, canvas.width, canvas.height, 0, gl.RGBA
 const cohesionDistance = bodyRadius * 6;
 const repulsionDistance = bodyRadius * 2.5;
 
+const smoothingRadius = bodyRadius * 5;
+
 const params = {
   cohesion: 5,
   repulsion: 10,
@@ -233,7 +235,8 @@ const params = {
   influence: 50,
   maxForce: 0.00006,
   frictionAir: 0.2,
-  forceDistance: 2
+  forceDistance: 2,
+  surfaceTension: 8
 };
 
 const lVertexBuffer = gl.createBuffer();
@@ -305,6 +308,10 @@ document.getElementById('forceDistance').addEventListener('input', (e) => {
   params.forceDistance = parseFloat(e.target.value);
   document.getElementById('forceDistanceVal').textContent = params.forceDistance;
 });
+document.getElementById('surfaceTension').addEventListener('input', (e) => {
+  params.surfaceTension = parseFloat(e.target.value);
+  document.getElementById('surfaceTensionVal').textContent = params.surfaceTension;
+});
 
 const walls = [
   Bodies.rectangle(window.innerWidth / 2, window.innerHeight + 50, window.innerWidth, 100, { isStatic: true }),
@@ -363,17 +370,22 @@ function render() {
     }
   }
 
+  const neighborCounts = new Int32Array(bodies.length);
+  const surfaceNormalsX = new Float64Array(bodies.length);
+  const surfaceNormalsY = new Float64Array(bodies.length);
+
   for (let i = 0; i < bodies.length; i++) {
     for (let j = i + 1; j < bodies.length; j++) {
       const dx = bodies[j].position.x - bodies[i].position.x;
       const dy = bodies[j].position.y - bodies[i].position.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
+      const distSq = dx * dx + dy * dy;
       const maxDist = params.forceDistance * bodyRadius;
-      
-      if (dist < maxDist && dist > 0.1) {
+
+      if (distSq < maxDist * maxDist && distSq > 0.01) {
+        const dist = Math.sqrt(distSq);
         const nx = dx / dist;
         const ny = dy / dist;
-        
+
         if (dist < repulsionDistance) {
           let repulsion = params.repulsion * 0.0001 / (dist * dist);
           repulsion = Math.min(repulsion, params.maxForce);
@@ -386,14 +398,40 @@ function render() {
           Body.applyForce(bodies[j], bodies[j].position, { x: -nx * cohesion, y: -ny * cohesion });
         }
       }
+
+      if (distSq < smoothingRadius * smoothingRadius) {
+        neighborCounts[i]++;
+        neighborCounts[j]++;
+        surfaceNormalsX[i] -= dx / Math.sqrt(distSq);
+        surfaceNormalsY[i] -= dy / Math.sqrt(distSq);
+        surfaceNormalsX[j] += dx / Math.sqrt(distSq);
+        surfaceNormalsY[j] += dy / Math.sqrt(distSq);
+      }
     }
-    
+  }
+
+  const targetNeighbors = 6;
+  for (let i = 0; i < bodies.length; i++) {
+    const deficit = targetNeighbors - neighborCounts[i];
+    if (deficit > 0) {
+      const normalLen = Math.sqrt(surfaceNormalsX[i] * surfaceNormalsX[i] + surfaceNormalsY[i] * surfaceNormalsY[i]);
+      if (normalLen > 0.001) {
+        const nx = surfaceNormalsX[i] / normalLen;
+        const ny = surfaceNormalsY[i] / normalLen;
+        let force = params.surfaceTension * 0.00001 * deficit;
+        force = Math.min(force, params.maxForce);
+        Body.applyForce(bodies[i], bodies[i].position, { x: nx * force, y: ny * force });
+      }
+    }
+  }
+
+  for (let i = 0; i < bodies.length; i++) {
     for (let j = 0; j < lBodies.length; j++) {
       const dx = lBodies[j].position.x - bodies[i].position.x;
       const dy = lBodies[j].position.y - bodies[i].position.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
       const maxDist = params.forceDistance * bodyRadius;
-      
+
       if (dist > bodyRadius && dist < maxDist) {
         const nx = dx / dist;
         const ny = dy / dist;
