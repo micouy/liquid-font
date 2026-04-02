@@ -151,8 +151,8 @@ const corners = [-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1];
 function createLShape() {
   const lBodies = [];
   const spacing = bodyRadius * 1.5;
-  const centerX = canvas.width / 2;
-  const centerY = canvas.height / 2;
+  const centerX = window.innerWidth / 2;
+  const centerY = window.innerHeight / 2;
   
   const stemHeight = 30;
   const baseWidth = 15;
@@ -219,19 +219,36 @@ gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
 gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, canvas.width, canvas.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
 
+const cohesionDistance = bodyRadius * 6;
+const repulsionDistance = bodyRadius * 2.5;
+
+const params = {
+  cohesion: 5,
+  repulsion: 10,
+  adhesive: 15,
+  cursorForce: 12,
+  radius: 1.1,
+  threshold: 0.09,
+  power: 2,
+  influence: 50,
+  maxForce: 0.00006,
+  frictionAir: 0.2,
+  forceDistance: 2
+};
+
 const lVertexBuffer = gl.createBuffer();
 
 const bodies = [];
 
 for (let i = 0; i < NUM_BODIES; i++) {
   const body = Bodies.circle(
-    Math.random() * canvas.width,
-    Math.random() * canvas.height * 0.5,
+    Math.random() * window.innerWidth,
+    Math.random() * window.innerHeight * 0.5,
     bodyRadius,
     {
       restitution: 0.3,
       friction: 0.1,
-      frictionAir: 0.01,
+      frictionAir: params.frictionAir,
       density: 0.001
     }
   );
@@ -240,20 +257,6 @@ for (let i = 0; i < NUM_BODIES; i++) {
 }
 
 const lBodies = createLShape();
-
-const cohesionDistance = bodyRadius * 6;
-const repulsionDistance = bodyRadius * 2.5;
-
-const params = {
-  cohesion: 3,
-  repulsion: 10,
-  adhesive: 5,
-  cursorForce: 12,
-  radius: 1.1,
-  threshold: 0.1,
-  power: 2,
-  influence: 50
-};
 
 document.getElementById('cohesion').addEventListener('input', (e) => {
   params.cohesion = parseFloat(e.target.value);
@@ -287,19 +290,33 @@ document.getElementById('influence').addEventListener('input', (e) => {
   params.influence = parseFloat(e.target.value);
   document.getElementById('influenceVal').textContent = params.influence;
 });
+document.getElementById('maxForce').addEventListener('input', (e) => {
+  params.maxForce = parseFloat(e.target.value);
+  document.getElementById('maxForceVal').textContent = params.maxForce;
+});
+document.getElementById('frictionAir').addEventListener('input', (e) => {
+  params.frictionAir = parseFloat(e.target.value);
+  document.getElementById('frictionAirVal').textContent = params.frictionAir;
+  for (const body of bodies) {
+    body.frictionAir = params.frictionAir;
+  }
+});
+document.getElementById('forceDistance').addEventListener('input', (e) => {
+  params.forceDistance = parseFloat(e.target.value);
+  document.getElementById('forceDistanceVal').textContent = params.forceDistance;
+});
 
 const walls = [
-  Bodies.rectangle(canvas.width / 2, canvas.height + 50, canvas.width, 100, { isStatic: true }),
-  Bodies.rectangle(-50, canvas.height / 2, 100, canvas.height, { isStatic: true }),
-  Bodies.rectangle(canvas.width + 50, canvas.height / 2, 100, canvas.height, { isStatic: true })
+  Bodies.rectangle(window.innerWidth / 2, window.innerHeight + 50, window.innerWidth, 100, { isStatic: true }),
+  Bodies.rectangle(-50, window.innerHeight / 2, 100, window.innerHeight, { isStatic: true }),
+  Bodies.rectangle(window.innerWidth + 50, window.innerHeight / 2, 100, window.innerHeight, { isStatic: true })
 ];
 Composite.add(world, walls);
 
 const mouse = { x: 0, y: 0, down: false };
 canvas.addEventListener('mousemove', (e) => {
-  const dpr = window.devicePixelRatio || 1;
-  mouse.x = e.clientX * dpr;
-  mouse.y = e.clientY * dpr;
+  mouse.x = e.clientX;
+  mouse.y = e.clientY;
 });
 canvas.addEventListener('mousedown', () => { mouse.down = true; });
 canvas.addEventListener('mouseup', () => { mouse.down = false; });
@@ -311,8 +328,8 @@ function updateVertices() {
     for (let j = 0; j < 6; j++) {
       vertices[idx++] = corners[j * 2];
       vertices[idx++] = corners[j * 2 + 1];
-      vertices[idx++] = pos.x;
-      vertices[idx++] = pos.y;
+      vertices[idx++] = pos.x * dpr;
+      vertices[idx++] = pos.y * dpr;
     }
   }
 }
@@ -325,8 +342,8 @@ function updateLVertices() {
     for (let j = 0; j < 6; j++) {
       lVerts[idx++] = corners[j * 2];
       lVerts[idx++] = corners[j * 2 + 1];
-      lVerts[idx++] = pos.x;
-      lVerts[idx++] = pos.y;
+      lVerts[idx++] = pos.x * dpr;
+      lVerts[idx++] = pos.y * dpr;
     }
   }
   return lVerts;
@@ -340,7 +357,8 @@ function render() {
     const dy = mouse.y - body.position.y;
     const dist = Math.sqrt(dx * dx + dy * dy);
     if (dist < 100 && !mouse.down) {
-      const force = 0.00000001 * params.cursorForce * (100 - dist);
+      let force = 0.00000001 * params.cursorForce * (100 - dist);
+      force = Math.min(force, params.maxForce);
       Body.applyForce(body, body.position, { x: dx * force, y: dy * force });
     }
   }
@@ -350,17 +368,20 @@ function render() {
       const dx = bodies[j].position.x - bodies[i].position.x;
       const dy = bodies[j].position.y - bodies[i].position.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
+      const maxDist = params.forceDistance * bodyRadius;
       
-      if (dist < cohesionDistance && dist > 0.1) {
+      if (dist < maxDist && dist > 0.1) {
         const nx = dx / dist;
         const ny = dy / dist;
         
         if (dist < repulsionDistance) {
-          const repulsion = params.repulsion * 0.0001 / (dist * dist);
+          let repulsion = params.repulsion * 0.0001 / (dist * dist);
+          repulsion = Math.min(repulsion, params.maxForce);
           Body.applyForce(bodies[i], bodies[i].position, { x: -nx * repulsion, y: -ny * repulsion });
           Body.applyForce(bodies[j], bodies[j].position, { x: nx * repulsion, y: ny * repulsion });
         } else {
-          const cohesion = params.cohesion * 0.0001 / dist;
+          let cohesion = params.cohesion * 0.0001 / dist;
+          cohesion = Math.min(cohesion, params.maxForce);
           Body.applyForce(bodies[i], bodies[i].position, { x: nx * cohesion, y: ny * cohesion });
           Body.applyForce(bodies[j], bodies[j].position, { x: -nx * cohesion, y: -ny * cohesion });
         }
@@ -371,11 +392,13 @@ function render() {
       const dx = lBodies[j].position.x - bodies[i].position.x;
       const dy = lBodies[j].position.y - bodies[i].position.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
+      const maxDist = params.forceDistance * bodyRadius;
       
-      if (dist > bodyRadius && dist < cohesionDistance) {
+      if (dist > bodyRadius && dist < maxDist) {
         const nx = dx / dist;
         const ny = dy / dist;
-        const adhesive = params.adhesive * 0.0001 / dist;
+        let adhesive = params.adhesive * 0.0001 / dist;
+        adhesive = Math.min(adhesive, params.maxForce);
         Body.applyForce(bodies[i], bodies[i].position, { x: nx * adhesive, y: ny * adhesive });
       }
     }
@@ -396,8 +419,8 @@ function render() {
   gl.enableVertexAttribArray(posLocation);
   
   gl.uniform2f(resolutionLocation, canvas.width, canvas.height);
-  gl.uniform1f(influenceLocation, params.influence);
-  gl.uniform1f(radiusLocation, params.radius);
+  gl.uniform1f(influenceLocation, params.influence * dpr);
+  gl.uniform1f(radiusLocation, params.radius * dpr);
   gl.uniform1f(powerLocation, params.power);
   gl.uniform3f(colorLocation, 0, 0, 0);
   
