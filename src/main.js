@@ -222,21 +222,22 @@ gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, canvas.width, canvas.height, 0, gl.RGBA
 const cohesionDistance = bodyRadius * 6;
 const repulsionDistance = bodyRadius * 2.5;
 
-const smoothingRadius = bodyRadius * 5;
+const smoothingRadius = bodyRadius * 3.5;
 
 const params = {
-  cohesion: 5,
+  cohesion: 13,
   repulsion: 10,
-  adhesive: 15,
-  cursorForce: 12,
-  radius: 1.1,
-  threshold: 0.09,
-  power: 2,
-  influence: 50,
-  maxForce: 0.00006,
-  frictionAir: 0.2,
+  adhesive: 67,
+  cursorForce: 25,
+  radius: 0.07,
+  threshold: 0.1,
+  power: 1,
+  influence: 60,
+  maxForce: 0.00024,
+  frictionAir: 0.15,
   forceDistance: 2,
-  surfaceTension: 8
+  surfaceTension: 144,
+  substeps: 3
 };
 
 const lVertexBuffer = gl.createBuffer();
@@ -312,6 +313,10 @@ document.getElementById('surfaceTension').addEventListener('input', (e) => {
   params.surfaceTension = parseFloat(e.target.value);
   document.getElementById('surfaceTensionVal').textContent = params.surfaceTension;
 });
+document.getElementById('substeps').addEventListener('input', (e) => {
+  params.substeps = parseInt(e.target.value);
+  document.getElementById('substepsVal').textContent = params.substeps;
+});
 
 const walls = [
   Bodies.rectangle(window.innerWidth / 2, window.innerHeight + 50, window.innerWidth, 100, { isStatic: true }),
@@ -357,9 +362,12 @@ function updateLVertices() {
 }
 
 function render() {
-  Engine.update(engine, 1000 / 60);
+  const dt = (1000 / 60) / params.substeps;
 
-  for (const body of bodies) {
+  for (let s = 0; s < params.substeps; s++) {
+    Engine.update(engine, dt);
+
+    for (const body of bodies) {
     const dx = mouse.x - body.position.x;
     const dy = mouse.y - body.position.y;
     const dist = Math.sqrt(dx * dx + dy * dy);
@@ -371,8 +379,10 @@ function render() {
   }
 
   const neighborCounts = new Int32Array(bodies.length);
-  const surfaceNormalsX = new Float64Array(bodies.length);
-  const surfaceNormalsY = new Float64Array(bodies.length);
+  const fluidNormalsX = new Float64Array(bodies.length);
+  const fluidNormalsY = new Float64Array(bodies.length);
+  const staticNormalsX = new Float64Array(bodies.length);
+  const staticNormalsY = new Float64Array(bodies.length);
 
   for (let i = 0; i < bodies.length; i++) {
     for (let j = i + 1; j < bodies.length; j++) {
@@ -402,25 +412,43 @@ function render() {
       if (distSq < smoothingRadius * smoothingRadius) {
         neighborCounts[i]++;
         neighborCounts[j]++;
-        surfaceNormalsX[i] -= dx / Math.sqrt(distSq);
-        surfaceNormalsY[i] -= dy / Math.sqrt(distSq);
-        surfaceNormalsX[j] += dx / Math.sqrt(distSq);
-        surfaceNormalsY[j] += dy / Math.sqrt(distSq);
+        const invDist = 1 / Math.sqrt(distSq);
+        fluidNormalsX[i] -= dx * invDist;
+        fluidNormalsY[i] -= dy * invDist;
+        fluidNormalsX[j] += dx * invDist;
+        fluidNormalsY[j] += dy * invDist;
+      }
+    }
+
+    for (let j = 0; j < lBodies.length; j++) {
+      const dx = lBodies[j].position.x - bodies[i].position.x;
+      const dy = lBodies[j].position.y - bodies[i].position.y;
+      const distSq = dx * dx + dy * dy;
+
+      if (distSq < smoothingRadius * smoothingRadius && distSq > 0.01) {
+        neighborCounts[i]++;
+        const invDist = 1 / Math.sqrt(distSq);
+        staticNormalsX[i] -= dx * invDist;
+        staticNormalsY[i] -= dy * invDist;
       }
     }
   }
 
   const targetNeighbors = 6;
+  const cohesionWeight = params.cohesion;
+  const adhesionWeight = params.adhesive;
+  const totalWeight = cohesionWeight + adhesionWeight || 1;
+
   for (let i = 0; i < bodies.length; i++) {
     const deficit = targetNeighbors - neighborCounts[i];
     if (deficit > 0) {
-      const normalLen = Math.sqrt(surfaceNormalsX[i] * surfaceNormalsX[i] + surfaceNormalsY[i] * surfaceNormalsY[i]);
+      const nx = (cohesionWeight * fluidNormalsX[i] + adhesionWeight * staticNormalsX[i]) / totalWeight;
+      const ny = (cohesionWeight * fluidNormalsY[i] + adhesionWeight * staticNormalsY[i]) / totalWeight;
+      const normalLen = Math.sqrt(nx * nx + ny * ny);
       if (normalLen > 0.001) {
-        const nx = surfaceNormalsX[i] / normalLen;
-        const ny = surfaceNormalsY[i] / normalLen;
-        let force = params.surfaceTension * 0.00001 * deficit;
-        force = Math.min(force, params.maxForce);
-        Body.applyForce(bodies[i], bodies[i].position, { x: nx * force, y: ny * force });
+        let force = params.surfaceTension * 0.0001 * deficit;
+        force = Math.min(force, params.maxForce * 5);
+        Body.applyForce(bodies[i], bodies[i].position, { x: -(nx / normalLen) * force, y: -(ny / normalLen) * force });
       }
     }
   }
@@ -441,6 +469,7 @@ function render() {
       }
     }
   }
+  } // end substeps
 
   updateVertices();
   const lVerts = updateLVertices();
