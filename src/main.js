@@ -83,7 +83,7 @@ const thresholdFragmentShader = `
     }
     
     if (lshapeAlpha > liquidAlpha) {
-      gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0);
+      gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
     } else {
       gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
     }
@@ -154,9 +154,9 @@ function createLShape() {
   const centerX = window.innerWidth / 2;
   const centerY = window.innerHeight / 2;
   
-  const stemHeight = 30;
-  const baseWidth = 15;
-  const serifSize = 5;
+  const stemHeight = 60;
+  const baseWidth = 30;
+  const serifSize = 10;
   
   const stemX = centerX - (baseWidth / 2) * spacing;
   const stemTopY = centerY - (stemHeight / 2) * spacing;
@@ -454,6 +454,7 @@ function render() {
   }
 
   for (let i = 0; i < bodies.length; i++) {
+    const surfaceness = Math.max(0, 1 - neighborCounts[i] / targetNeighbors);
     for (let j = 0; j < lBodies.length; j++) {
       const dx = lBodies[j].position.x - bodies[i].position.x;
       const dy = lBodies[j].position.y - bodies[i].position.y;
@@ -463,7 +464,7 @@ function render() {
       if (dist > bodyRadius && dist < maxDist) {
         const nx = dx / dist;
         const ny = dy / dist;
-        let adhesive = params.adhesive * 0.0001 / dist;
+        let adhesive = params.adhesive * 0.0001 / dist * surfaceness;
         adhesive = Math.min(adhesive, params.maxForce);
         Body.applyForce(bodies[i], bodies[i].position, { x: nx * adhesive, y: ny * adhesive });
       }
@@ -511,7 +512,7 @@ function render() {
   gl.vertexAttribPointer(cornerLocation, 2, gl.FLOAT, false, 16, 0);
   gl.vertexAttribPointer(posLocation, 2, gl.FLOAT, false, 16, 8);
   
-  gl.uniform3f(colorLocation, 1, 0, 0);
+  gl.uniform3f(colorLocation, 0, 0, 0);
   gl.drawArrays(gl.TRIANGLES, 0, lBodies.length * 6);
 
   // Render to screen
