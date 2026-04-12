@@ -1,4 +1,5 @@
 import Matter from 'matter-js';
+import { loadFont, getGlyphCenterline } from './font-paths.js';
 
 const { Engine, Render, Runner, Bodies, Composite, Body, Events, Constraint } = Matter;
 
@@ -262,6 +263,33 @@ for (let i = 0; i < NUM_BODIES; i++) {
 
 const lBodies = createLShape();
 
+let glyphBodies = [];
+
+function createGlyphShape(char, offsetX, offsetY, fontSize = 40) {
+  const spacing = bodyRadius * 1.5;
+  const { points } = getGlyphCenterline(char, {
+    fontSize,
+    spacing: 1,
+    transform: {
+      x: offsetX,
+      y: offsetY,
+      scale: spacing,
+      scaleY: spacing,
+    },
+  });
+
+  const newBodies = points.map(p =>
+    Bodies.circle(p.x, p.y, bodyRadius, { isStatic: true })
+  );
+  Composite.add(world, newBodies);
+  return newBodies;
+}
+
+(async () => {
+  await loadFont();
+  glyphBodies = createGlyphShape('A', 200, 0);
+})();
+
 document.getElementById('cohesion').addEventListener('input', (e) => {
   params.cohesion = parseFloat(e.target.value);
   document.getElementById('cohesionVal').textContent = params.cohesion;
@@ -346,11 +374,11 @@ function updateVertices() {
   }
 }
 
-function updateLVertices() {
-  const lVerts = new Float32Array(lBodies.length * 6 * 4);
+function updateStaticVertices(staticBodies) {
+  const lVerts = new Float32Array(staticBodies.length * 6 * 4);
   let idx = 0;
-  for (let i = 0; i < lBodies.length; i++) {
-    const pos = lBodies[i].position;
+  for (let i = 0; i < staticBodies.length; i++) {
+    const pos = staticBodies[i].position;
     for (let j = 0; j < 6; j++) {
       lVerts[idx++] = corners[j * 2];
       lVerts[idx++] = corners[j * 2 + 1];
@@ -361,8 +389,13 @@ function updateLVertices() {
   return lVerts;
 }
 
+function getAllStaticBodies() {
+  return lBodies.concat(glyphBodies);
+}
+
 function render() {
   const dt = (1000 / 60) / params.substeps;
+  const allStatic = getAllStaticBodies();
 
   for (let s = 0; s < params.substeps; s++) {
     Engine.update(engine, dt);
@@ -420,9 +453,9 @@ function render() {
       }
     }
 
-    for (let j = 0; j < lBodies.length; j++) {
-      const dx = lBodies[j].position.x - bodies[i].position.x;
-      const dy = lBodies[j].position.y - bodies[i].position.y;
+    for (let j = 0; j < allStatic.length; j++) {
+      const dx = allStatic[j].position.x - bodies[i].position.x;
+      const dy = allStatic[j].position.y - bodies[i].position.y;
       const distSq = dx * dx + dy * dy;
 
       if (distSq < smoothingRadius * smoothingRadius && distSq > 0.01) {
@@ -455,9 +488,9 @@ function render() {
 
   for (let i = 0; i < bodies.length; i++) {
     const surfaceness = Math.max(0, 1 - neighborCounts[i] / targetNeighbors);
-    for (let j = 0; j < lBodies.length; j++) {
-      const dx = lBodies[j].position.x - bodies[i].position.x;
-      const dy = lBodies[j].position.y - bodies[i].position.y;
+    for (let j = 0; j < allStatic.length; j++) {
+      const dx = allStatic[j].position.x - bodies[i].position.x;
+      const dy = allStatic[j].position.y - bodies[i].position.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
       const maxDist = params.forceDistance * bodyRadius;
 
@@ -473,7 +506,7 @@ function render() {
   } // end substeps
 
   updateVertices();
-  const lVerts = updateLVertices();
+  const lVerts = updateStaticVertices(allStatic);
 
   // Render liquid particles to first framebuffer
   gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
@@ -513,7 +546,7 @@ function render() {
   gl.vertexAttribPointer(posLocation, 2, gl.FLOAT, false, 16, 8);
   
   gl.uniform3f(colorLocation, 0, 0, 0);
-  gl.drawArrays(gl.TRIANGLES, 0, lBodies.length * 6);
+  gl.drawArrays(gl.TRIANGLES, 0, allStatic.length * 6);
 
   // Render to screen
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
