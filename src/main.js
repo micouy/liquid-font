@@ -7,10 +7,12 @@ const canvas = document.getElementById('canvas');
 const gl = canvas.getContext('webgl');
 
 const dpr = window.devicePixelRatio || 1;
-canvas.width = window.innerWidth * dpr;
-canvas.height = window.innerHeight * dpr;
-canvas.style.width = window.innerWidth + 'px';
-canvas.style.height = window.innerHeight + 'px';
+let canvasWidth = window.innerWidth;
+let canvasHeight = window.innerHeight;
+canvas.width = canvasWidth * dpr;
+canvas.height = canvasHeight * dpr;
+canvas.style.width = canvasWidth + 'px';
+canvas.style.height = canvasHeight + 'px';
 gl.viewport(0, 0, canvas.width, canvas.height);
 gl.enable(gl.BLEND);
 gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
@@ -152,8 +154,8 @@ const corners = [-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1];
 function createLShape() {
   const lBodies = [];
   const spacing = bodyRadius * 1.5;
-  const centerX = window.innerWidth / 2;
-  const centerY = window.innerHeight / 2;
+  const centerX = canvasWidth / 2;
+  const centerY = canvasHeight / 2;
   
   const stemHeight = 60;
   const baseWidth = 30;
@@ -247,8 +249,8 @@ const bodies = [];
 
 for (let i = 0; i < NUM_BODIES; i++) {
   const body = Bodies.circle(
-    Math.random() * window.innerWidth,
-    Math.random() * window.innerHeight * 0.5,
+    Math.random() * canvasWidth,
+    Math.random() * canvasHeight * 0.5,
     bodyRadius,
     {
       restitution: 0.3,
@@ -347,9 +349,10 @@ document.getElementById('substeps').addEventListener('input', (e) => {
 });
 
 const walls = [
-  Bodies.rectangle(window.innerWidth / 2, window.innerHeight + 50, window.innerWidth, 100, { isStatic: true }),
-  Bodies.rectangle(-50, window.innerHeight / 2, 100, window.innerHeight, { isStatic: true }),
-  Bodies.rectangle(window.innerWidth + 50, window.innerHeight / 2, 100, window.innerHeight, { isStatic: true })
+  Bodies.rectangle(canvasWidth / 2, canvasHeight + 50, canvasWidth, 100, { isStatic: true }),
+  Bodies.rectangle(-50, canvasHeight / 2, 100, canvasHeight, { isStatic: true }),
+  Bodies.rectangle(canvasWidth + 50, canvasHeight / 2, 100, canvasHeight, { isStatic: true }),
+  Bodies.rectangle(canvasWidth / 2, -50, canvasWidth, 100, { isStatic: true })
 ];
 Composite.add(world, walls);
 
@@ -577,16 +580,22 @@ function render() {
 }
 
 window.addEventListener('resize', () => {
-  const dpr = window.devicePixelRatio || 1;
-  canvas.width = window.innerWidth * dpr;
-  canvas.height = window.innerHeight * dpr;
-  canvas.style.width = window.innerWidth + 'px';
-  canvas.style.height = window.innerHeight + 'px';
+  canvasWidth = window.innerWidth;
+  canvasHeight = window.innerHeight;
+  canvas.width = canvasWidth * dpr;
+  canvas.height = canvasHeight * dpr;
+  canvas.style.width = canvasWidth + 'px';
+  canvas.style.height = canvasHeight + 'px';
   gl.viewport(0, 0, canvas.width, canvas.height);
   gl.bindTexture(gl.TEXTURE_2D, accumTexture);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, canvas.width, canvas.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
   gl.bindTexture(gl.TEXTURE_2D, lAccumTexture);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, canvas.width, canvas.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+
+  Body.setPosition(walls[0], { x: canvasWidth / 2, y: canvasHeight + 50 });
+  Body.setPosition(walls[1], { x: -50, y: canvasHeight / 2 });
+  Body.setPosition(walls[2], { x: canvasWidth + 50, y: canvasHeight / 2 });
+  Body.setPosition(walls[3], { x: canvasWidth / 2, y: -50 });
 });
 
 render();
