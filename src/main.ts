@@ -19,6 +19,7 @@ let h = 25;
 let restDensity = 1;
 let stiffness = 500;
 let viscosity = 50;
+let surfaceTension = 8;
 let particleMass = 175;
 let gravity = 0.5;
 let dt = 0.5;
@@ -37,6 +38,7 @@ bindSlider('h', 'hVal', v => h = v, 0);
 bindSlider('restDensity', 'restDensityVal', v => restDensity = v, 2);
 bindSlider('stiffness', 'stiffnessVal', v => stiffness = v, 0);
 bindSlider('viscosity', 'viscosityVal', v => viscosity = v, 1);
+bindSlider('surfaceTension', 'surfaceTensionVal', v => surfaceTension = v, 1);
 bindSlider('particleMass', 'particleMassVal', v => particleMass = v, 1);
 bindSlider('gravity', 'gravityVal', v => gravity = v, 2);
 bindSlider('dt', 'dtVal', v => dt = v, 3);
@@ -46,6 +48,7 @@ const params: SimParams = {
   restDensity: restDensity,
   stiffness: stiffness,
   viscosity: viscosity,
+  surfaceTension: surfaceTension,
   particleMass: particleMass,
   bodyRadius: 4,
   frictionAir: 0.01,
@@ -106,6 +109,7 @@ function render() {
   params.restDensity = restDensity;
   params.stiffness = stiffness;
   params.viscosity = viscosity;
+  params.surfaceTension = surfaceTension;
   params.particleMass = particleMass;
   params.gravity = gravity;
   params.dt = dt;

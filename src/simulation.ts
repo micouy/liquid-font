@@ -3,6 +3,7 @@ export interface SimParams {
   restDensity: number;
   stiffness: number;
   viscosity: number;
+  surfaceTension: number;
   particleMass: number;
   bodyRadius: number;
   frictionAir: number;
@@ -117,6 +118,22 @@ float W_poly6(float r, float h) {
   return coeff * diff * diff * diff;
 }
 
+vec2 gradW_poly6(vec2 r, float dist, float h) {
+  if (dist >= h || dist < 0.0001) return vec2(0.0);
+  float h2 = h * h;
+  float diff = h2 - dist * dist;
+  float coeff = 24.0 / (PI * pow(h, 8.0)) * diff * diff;
+  return coeff * r;
+}
+
+float lapW_poly6(float dist, float h) {
+  if (dist >= h) return 0.0;
+  float h2 = h * h;
+  float diff = h2 - dist * dist;
+  float diff2 = h2 - 3.0 * dist * dist;
+  return 24.0 / (PI * pow(h, 8.0)) * diff * diff2;
+}
+
 void main() {
   float idx = floor(gl_FragCoord.x);
   if (idx >= u_numParticles) discard;
@@ -126,6 +143,8 @@ void main() {
   vec2 pos = state.rg;
 
   float density = 0.0;
+  vec2 colorGrad = vec2(0.0);
+  float colorLap = 0.0;
 
   for (int i = 0; i < NUM_PARTICLES; i++) {
     if (float(i) >= u_numParticles) continue;
@@ -133,13 +152,16 @@ void main() {
     vec4 other = texture2D(u_state, oUV);
     vec2 diff = other.rg - pos;
     float dist = length(diff);
-    density += u_mass * W_poly6(dist, u_h);
+    float w = W_poly6(dist, u_h);
+    density += u_mass * w;
+    colorGrad += (u_mass / max(density, 0.001)) * gradW_poly6(diff, dist, u_h);
+    colorLap += (u_mass / max(density, 0.001)) * lapW_poly6(dist, u_h);
   }
 
   density = max(density, 0.001);
   float pressure = u_stiffness * (density - u_restDensity);
 
-  gl_FragColor = vec4(density, pressure, 0.0, 0.0);
+  gl_FragColor = vec4(density, pressure, colorGrad);
 }
 `;
 }
@@ -154,6 +176,7 @@ uniform float u_numParticles;
 uniform float u_h;
 uniform float u_mass;
 uniform float u_viscosity;
+uniform float u_surfaceTension;
 uniform vec2 u_canvasSize;
 uniform float u_frictionAir;
 uniform float u_gravity;
@@ -186,6 +209,8 @@ void main() {
   vec4 densData = texture2D(u_density, uv);
   float density_i = densData.r;
   float pressure_i = densData.g;
+  vec2 colorGrad_i = densData.ba;
+  float colorLap_i = 0.0;
 
   vec2 f_pressure = vec2(0.0);
   vec2 f_viscosity = vec2(0.0);
@@ -205,6 +230,7 @@ void main() {
     vec4 oDensData = texture2D(u_density, oUV);
     float density_j = oDensData.r;
     float pressure_j = oDensData.g;
+    colorLap_i += (u_mass / density_j) * (45.0 / (PI * pow(u_h, 6.0))) * (u_h - dist);
 
     vec2 gradW = gradW_spiky(r, dist, u_h);
     f_pressure -= u_mass * (pressure_i + pressure_j) / (2.0 * density_j) * gradW;
@@ -213,7 +239,13 @@ void main() {
     f_viscosity += u_viscosity * u_mass * (other.ba - vel) / density_j * lapW;
   }
 
-  vec2 acceleration = (f_pressure + f_viscosity) / density_i;
+  float colorGradLen = length(colorGrad_i);
+  vec2 f_surface = vec2(0.0);
+  if (colorGradLen > 6.0) {
+    f_surface = -u_surfaceTension * colorLap_i * (colorGrad_i / colorGradLen);
+  }
+
+  vec2 acceleration = (f_pressure + f_viscosity + f_surface) / density_i;
   acceleration.y += u_gravity;
 
   vel += acceleration * u_dt;
@@ -302,6 +334,7 @@ export class GPUSimulation {
       "u_h",
       "u_mass",
       "u_viscosity",
+      "u_surfaceTension",
       "u_canvasSize",
       "u_frictionAir",
       "u_gravity",
@@ -417,6 +450,7 @@ export class GPUSimulation {
       gl.uniform1f(this.forceUniforms["u_h"], params.h);
       gl.uniform1f(this.forceUniforms["u_mass"], params.particleMass);
       gl.uniform1f(this.forceUniforms["u_viscosity"], params.viscosity);
+      gl.uniform1f(this.forceUniforms["u_surfaceTension"], params.surfaceTension);
       gl.uniform2f(
         this.forceUniforms["u_canvasSize"],
         this.canvasWidth,
