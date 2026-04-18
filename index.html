@@ -17,6 +17,13 @@
             canvas {
                 display: block;
             }
+            #overlay {
+                position: fixed;
+                top: 0;
+                left: 0;
+                pointer-events: none;
+                z-index: 100;
+            }
             #controls {
                 position: fixed;
                 bottom: 10px;
@@ -187,8 +194,31 @@
                     value="3"
                 /><span id="substepsVal">3</span></label
             >
+            <label
+                ><span>Thickness:</span
+                ><input
+                    type="range"
+                    id="thickness"
+                    min="1"
+                    max="10"
+                    step="1"
+                    value="7"
+                /><span id="thicknessVal">7</span></label
+            >
+            <label
+                ><span>Gravity:</span
+                ><input
+                    type="range"
+                    id="gravity"
+                    min="0"
+                    max="10"
+                    step="0.1"
+                    value="3"
+                /><span id="gravityVal">3</span></label
+            >
         </div>
         <canvas id="canvas"></canvas>
-        <script type="module" src="/src/debug-svg.js"></script>
+        <canvas id="overlay"></canvas>
+        <script type="module" src="/src/main.ts"></script>
     </body>
 </html>
