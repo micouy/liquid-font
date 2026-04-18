@@ -1,66 +1,163 @@
 <!doctype html>
 <html lang="en">
-    <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>liquid-font</title>
-        <style>
-            * {
-                margin: 0;
-                padding: 0;
-                box-sizing: border-box;
-            }
-            body {
-                background: #0a0a0f;
-                overflow: hidden;
-                display: flex;
-                flex-direction: column;
-                height: 100vh;
-            }
-            canvas {
-                flex: 1;
-            }
-            #controls {
-                background: rgba(0, 0, 0, 0.8);
-                padding: 10px;
-                color: #fff;
-                font-family: monospace;
-                font-size: 12px;
-                display: flex;
-                flex-wrap: wrap;
-                gap: 4px 16px;
-            }
-            #controls label {
-                display: inline-flex;
-                align-items: center;
-                gap: 4px;
-                white-space: nowrap;
-            }
-            #controls input {
-                width: 100px;
-            }
-            #controls span.val {
-                display: inline-block;
-                min-width: 50px;
-                text-align: right;
-            }
-            canvas {
-                display: block;
-            }
-        </style>
-    </head>
-    <body>
-        <div id="controls">
-            <label><span>h:</span><input type="range" id="h" min="5" max="100" step="1" value="25" /><span class="val" id="hVal">25</span></label>
-            <label><span>restDensity:</span><input type="range" id="restDensity" min="0.01" max="10" step="0.01" value="1" /><span class="val" id="restDensityVal">1.00</span></label>
-            <label><span>stiffness:</span><input type="range" id="stiffness" min="1" max="5000" step="1" value="500" /><span class="val" id="stiffnessVal">500</span></label>
-            <label><span>viscosity:</span><input type="range" id="viscosity" min="0" max="500" step="0.1" value="50" /><span class="val" id="viscosityVal">50.0</span></label>
-            <label><span>surfaceTen σ:</span><input type="range" id="surfaceTension" min="0" max="100" step="0.1" value="8" /><span class="val" id="surfaceTensionVal">8.0</span></label>
-            <label><span>mass:</span><input type="range" id="particleMass" min="1" max="1000" step="1" value="175" /><span class="val" id="particleMassVal">175.0</span></label>
-            <label><span>gravity:</span><input type="range" id="gravity" min="0" max="5" step="0.01" value="0.5" /><span class="val" id="gravityVal">0.50</span></label>
-            <label><span>dt:</span><input type="range" id="dt" min="0.001" max="2" step="0.001" value="0.5" /><span class="val" id="dtVal">0.500</span></label>
-        </div>
-        <canvas id="canvas"></canvas>
-        <script type="module" src="/src/main.ts"></script>
-    </body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>liquid-font</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        background: #0a0a0f;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+      }
+      canvas {
+        display: block;
+      }
+      #canvas {
+        flex: 1;
+      }
+      #controls {
+        background: rgba(0, 0, 0, 0.8);
+        padding: 10px;
+        color: #fff;
+        font-family: monospace;
+        font-size: 12px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 16px;
+      }
+      #controls label {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        white-space: nowrap;
+      }
+      #controls input {
+        width: 100px;
+      }
+      #controls span.val {
+        display: inline-block;
+        min-width: 50px;
+        text-align: right;
+      }
+      #timeline {
+        width: 100%;
+        height: 80px;
+        background: #111;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="controls">
+      <label
+        ><span>stickiness:</span
+        ><input
+          type="range"
+          id="stickiness"
+          min="0"
+          max="20"
+          step="1"
+          value="8"
+        /><span class="val" id="stickinessVal">8</span></label
+      >
+      <label
+        ><span>stiffness:</span
+        ><input
+          type="range"
+          id="stiffness"
+          min="0"
+          max="20"
+          step="1"
+          value="10"
+        /><span class="val" id="stiffnessVal">10</span></label
+      >
+      <label
+        ><span>surfTen:</span
+        ><input
+          type="range"
+          id="surfaceTension"
+          min="0"
+          max="60"
+          step="1"
+          value="0"
+        /><span class="val" id="surfaceTensionVal">0</span></label
+      >
+      <label
+        ><span>adhesive:</span
+        ><input
+          type="range"
+          id="adhesive"
+          min="0"
+          max="40"
+          step="1"
+          value="12"
+        /><span class="val" id="adhesiveVal">12</span></label
+      >
+      <label
+        ><span>range:</span
+        ><input
+          type="range"
+          id="interactionRange"
+          min="2"
+          max="10"
+          step="0.5"
+          value="4"
+        /><span class="val" id="interactionRangeVal">4.0</span></label
+      >
+      <label
+        ><span>maxForce:</span
+        ><input
+          type="range"
+          id="maxForce"
+          min="0"
+          max="0.2"
+          step="0.001"
+          value="0.05"
+        /><span class="val" id="maxForceVal">0.050</span></label
+      >
+      <label
+        ><span>overlapCap:</span
+        ><input
+          type="range"
+          id="overlapForceMax"
+          min="0"
+          max="2"
+          step="0.01"
+          value="0.5"
+        /><span class="val" id="overlapForceMaxVal">0.50</span></label
+      >
+      <label
+        ><span>frictionAir:</span
+        ><input
+          type="range"
+          id="frictionAir"
+          min="0"
+          max="0.01"
+          step="0.001"
+          value="0.003"
+        /><span class="val" id="frictionAirVal">0.003</span></label
+      >
+      <label
+        ><span>gravity:</span
+        ><input
+          type="range"
+          id="gravity"
+          min="0"
+          max="0.2"
+          step="0.005"
+          value="0.05"
+        /><span class="val" id="gravityVal">0.050</span></label
+      >
+    </div>
+    <canvas id="timeline"></canvas>
+    <canvas id="canvas"></canvas>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
 </html>

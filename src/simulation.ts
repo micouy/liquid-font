@@ -1,19 +1,43 @@
+import { PAIR_FORCE_GLSL } from "./pair-force";
+
 export interface SimParams {
-  h: number;
-  restDensity: number;
+  stickiness: number;
   stiffness: number;
-  viscosity: number;
   surfaceTension: number;
-  particleMass: number;
+  adhesive: number;
+  smoothingRadius: number;
+  interactionRange: number;
   bodyRadius: number;
+  maxForce: number;
+  overlapForceMax: number;
   frictionAir: number;
   gravity: number;
+  targetNeighbors: number;
   substeps: number;
-  dt: number;
+}
+
+export interface ForceAverages {
+  total: number;
+  attraction: number;
+  repulsion: number;
+  surfaceTension: number;
+  adhesion: number;
+}
+
+export interface SpacingStats {
+  meanNearest: number;
+  minNearest: number;
+}
+
+export interface VelocityStats {
+  meanSpeed: number;
+  maxSpeed: number;
 }
 
 const MAX_PARTICLES = 1000;
+const MAX_GLYPHS = 4096;
 const NUM_PARTICLES = 1000;
+const BOUNDARY_JITTER = 0.0002;
 
 function createShader(
   gl: WebGLRenderingContext,
@@ -96,162 +120,184 @@ const VERT_SOURCE = `
   }
 `;
 
-function buildDensityFragment(): string {
+function buildSimFragment(): string {
   return `
 precision highp float;
 
 uniform sampler2D u_state;
+uniform sampler2D u_glyphs;
 uniform float u_numParticles;
-uniform float u_h;
-uniform float u_mass;
-uniform float u_restDensity;
+uniform float u_numGlyphs;
+uniform float u_stickiness;
 uniform float u_stiffness;
-
-#define NUM_PARTICLES ${MAX_PARTICLES}
-#define PI 3.141592653589793
-
-float W_poly6(float r, float h) {
-  if (r >= h) return 0.0;
-  float h2 = h * h;
-  float diff = h2 - r * r;
-  float coeff = 4.0 / (PI * pow(h, 8.0));
-  return coeff * diff * diff * diff;
-}
-
-vec2 gradW_poly6(vec2 r, float dist, float h) {
-  if (dist >= h || dist < 0.0001) return vec2(0.0);
-  float h2 = h * h;
-  float diff = h2 - dist * dist;
-  float coeff = 24.0 / (PI * pow(h, 8.0)) * diff * diff;
-  return coeff * r;
-}
-
-float lapW_poly6(float dist, float h) {
-  if (dist >= h) return 0.0;
-  float h2 = h * h;
-  float diff = h2 - dist * dist;
-  float diff2 = h2 - 3.0 * dist * dist;
-  return 24.0 / (PI * pow(h, 8.0)) * diff * diff2;
-}
-
-void main() {
-  float idx = floor(gl_FragCoord.x);
-  if (idx >= u_numParticles) discard;
-
-  vec2 uv = vec2((idx + 0.5) / u_numParticles, 0.5);
-  vec4 state = texture2D(u_state, uv);
-  vec2 pos = state.rg;
-
-  float density = 0.0;
-  vec2 colorGrad = vec2(0.0);
-  float colorLap = 0.0;
-
-  for (int i = 0; i < NUM_PARTICLES; i++) {
-    if (float(i) >= u_numParticles) continue;
-    vec2 oUV = vec2((float(i) + 0.5) / u_numParticles, 0.5);
-    vec4 other = texture2D(u_state, oUV);
-    vec2 diff = other.rg - pos;
-    float dist = length(diff);
-    float w = W_poly6(dist, u_h);
-    density += u_mass * w;
-    colorGrad += (u_mass / max(density, 0.001)) * gradW_poly6(diff, dist, u_h);
-    colorLap += (u_mass / max(density, 0.001)) * lapW_poly6(dist, u_h);
-  }
-
-  density = max(density, 0.001);
-  float pressure = u_stiffness * (density - u_restDensity);
-
-  gl_FragColor = vec4(density, pressure, colorGrad);
-}
-`;
-}
-
-function buildForceFragment(): string {
-  return `
-precision highp float;
-
-uniform sampler2D u_state;
-uniform sampler2D u_density;
-uniform float u_numParticles;
-uniform float u_h;
-uniform float u_mass;
-uniform float u_viscosity;
 uniform float u_surfaceTension;
-uniform vec2 u_canvasSize;
+uniform float u_adhesive;
+uniform float u_smoothingRadius;
+uniform float u_interactionRange;
+uniform float u_bodyRadius;
+uniform float u_maxForce;
+uniform float u_overlapForceMax;
 uniform float u_frictionAir;
 uniform float u_gravity;
-uniform float u_bodyRadius;
-uniform float u_dt;
+uniform vec2 u_canvasSize;
+uniform float u_targetNeighbors;
+uniform float u_tick;
 
 #define NUM_PARTICLES ${MAX_PARTICLES}
-#define PI 3.141592653589793
+#define NUM_GLYPHS ${MAX_GLYPHS}
+#define SECONDARY_FORCE_SCALE 0.01
 
-vec2 gradW_spiky(vec2 r, float dist, float h) {
-  if (dist >= h || dist < 0.0001) return vec2(0.0);
-  float coeff = 30.0 / (PI * pow(h, 5.0)) * (h - dist) * (h - dist) / dist;
-  return coeff * r;
-}
+${PAIR_FORCE_GLSL}
 
-float lapW_viscosity(float dist, float h) {
-  if (dist >= h) return 0.0;
-  return 40.0 / (PI * pow(h, 5.0)) * (h - dist);
+float hash(float n) {
+  return fract(sin(n) * 43758.5453123);
 }
 
 void main() {
-  float idx = floor(gl_FragCoord.x);
-  if (idx >= u_numParticles) discard;
+  float pxIdx = floor(gl_FragCoord.x);
+  bool isForce = false;
+  float idx = pxIdx;
+  if (idx >= u_numParticles) {
+    idx -= u_numParticles;
+    isForce = true;
+  }
+  if (idx >= u_numParticles || idx < 0.0) discard;
 
-  vec2 uv = vec2((idx + 0.5) / u_numParticles, 0.5);
+  vec2 uv = vec2((idx + 0.5) / (u_numParticles * 2.0), 0.5);
   vec4 state = texture2D(u_state, uv);
   vec2 pos = state.rg;
   vec2 vel = state.ba;
 
-  vec4 densData = texture2D(u_density, uv);
-  float density_i = densData.r;
-  float pressure_i = densData.g;
-  vec2 colorGrad_i = densData.ba;
-  float colorLap_i = 0.0;
+  float fx = 0.0;
+  float fy = u_gravity * 0.1;
 
-  vec2 f_pressure = vec2(0.0);
-  vec2 f_viscosity = vec2(0.0);
+  float fAttrX = 0.0; float fAttrY = 0.0;
+  float fRepX = 0.0; float fRepY = 0.0;
+  float fStX  = 0.0; float fStY  = 0.0;
+  float fAdhX = 0.0; float fAdhY = 0.0;
+
+  float restDist = u_bodyRadius * 2.0;
+  float maxDist = max(restDist, u_interactionRange * u_bodyRadius);
+  float maxDistSq = maxDist * maxDist;
+  float smoothR = u_smoothingRadius;
+  float smoothRSq = smoothR * smoothR;
+
+  int fluidNeighbors = 0;
+  vec2 fluidNormal = vec2(0.0);
+  vec2 staticNormal = vec2(0.0);
 
   for (int i = 0; i < NUM_PARTICLES; i++) {
-    if (float(i) == idx) continue;
     if (float(i) >= u_numParticles) continue;
+    if (float(i) == idx) continue;
 
-    vec2 oUV = vec2((float(i) + 0.5) / u_numParticles, 0.5);
+    vec2 oUV = vec2((float(i) + 0.5) / (u_numParticles * 2.0), 0.5);
     vec4 other = texture2D(u_state, oUV);
-    vec2 r = other.rg - pos;
-    float dist = length(r);
+    vec2 diff = other.rg - pos;
+    float distSq = diff.x * diff.x + diff.y * diff.y;
 
-    if (dist >= u_h) continue;
-    if (dist < 0.0001) continue;
+    if (distSq < maxDistSq) {
+      float safeDistSq = max(distSq, 0.0001);
+      float dist = sqrt(safeDistSq);
+      float nx = diff.x / dist;
+      float ny = diff.y / dist;
 
-    vec4 oDensData = texture2D(u_density, oUV);
-    float density_j = oDensData.r;
-    float pressure_j = oDensData.g;
-    colorLap_i += (u_mass / density_j) * (45.0 / (PI * pow(u_h, 6.0))) * (u_h - dist);
+      vec2 pairForce = computePairForceComponents(
+        dist,
+        u_bodyRadius,
+        u_interactionRange,
+        u_stickiness,
+        u_stiffness,
+        u_maxForce,
+        u_overlapForceMax
+      );
+      fAttrX += nx * pairForce.x;
+      fAttrY += ny * pairForce.x;
+      fRepX -= nx * pairForce.y;
+      fRepY -= ny * pairForce.y;
+    }
 
-    vec2 gradW = gradW_spiky(r, dist, u_h);
-    f_pressure -= u_mass * (pressure_i + pressure_j) / (2.0 * density_j) * gradW;
-
-    float lapW = lapW_viscosity(dist, u_h);
-    f_viscosity += u_viscosity * u_mass * (other.ba - vel) / density_j * lapW;
+    if (distSq < smoothRSq) {
+      fluidNeighbors++;
+      float invDist = 1.0 / sqrt(distSq);
+      fluidNormal.x -= diff.x * invDist;
+      fluidNormal.y -= diff.y * invDist;
+    }
   }
 
-  float colorGradLen = length(colorGrad_i);
-  vec2 f_surface = vec2(0.0);
-  if (colorGradLen > 6.0) {
-    f_surface = -u_surfaceTension * colorLap_i * (colorGrad_i / colorGradLen);
+  float surfaceness = max(0.0, 1.0 - float(fluidNeighbors) / u_targetNeighbors);
+  int staticNeighbors = 0;
+
+  for (int j = 0; j < NUM_GLYPHS; j++) {
+    if (float(j) >= u_numGlyphs) continue;
+
+    vec2 gUV = vec2((float(j) + 0.5) / float(NUM_GLYPHS), 0.5);
+    vec4 glyph = texture2D(u_glyphs, gUV);
+    vec2 diff = glyph.rg - pos;
+    float distSq = diff.x * diff.x + diff.y * diff.y;
+
+    if (distSq < smoothRSq && distSq > 0.01) {
+      staticNeighbors++;
+      float invDist = 1.0 / sqrt(distSq);
+      staticNormal.x -= diff.x * invDist;
+      staticNormal.y -= diff.y * invDist;
+    }
+
+    if (surfaceness > 0.0 && distSq > u_bodyRadius * u_bodyRadius && distSq < maxDistSq) {
+      float dist = sqrt(distSq);
+      float nx = diff.x / dist;
+      float ny = diff.y / dist;
+      float adh = u_adhesive * SECONDARY_FORCE_SCALE / dist * surfaceness;
+      adh = min(adh, u_maxForce);
+      fAdhX += nx * adh;
+      fAdhY += ny * adh;
+    }
   }
 
-  vec2 acceleration = (f_pressure + f_viscosity + f_surface) / density_i;
-  acceleration.y += u_gravity;
+  int totalNeighbors = fluidNeighbors + staticNeighbors;
+  float deficit = max(0.0, u_targetNeighbors - float(totalNeighbors));
 
-  vel += acceleration * u_dt;
-  vel *= (1.0 - u_frictionAir);
+  if (deficit > 0.0) {
+    float totalWeight = u_stickiness + u_adhesive;
+    if (totalWeight < 0.001) totalWeight = 1.0;
+    vec2 blendNormal = (u_stickiness * fluidNormal + u_adhesive * staticNormal) / totalWeight;
+    float normalLen = length(blendNormal);
+    if (normalLen > 0.001) {
+      float stForce = u_surfaceTension * SECONDARY_FORCE_SCALE * deficit;
+      stForce = min(stForce, u_maxForce * 5.0);
+      fStX -= (blendNormal.x / normalLen) * stForce;
+      fStY -= (blendNormal.y / normalLen) * stForce;
+    }
+  }
 
-  vec2 newPos = pos + vel * u_dt;
+  fx += fAttrX + fRepX + fStX + fAdhX;
+  fy += fAttrY + fRepY + fStY + fAdhY;
+
+  bool nearHorizontalWall = pos.y < u_bodyRadius * 2.0 || pos.y > u_canvasSize.y - u_bodyRadius * 2.0;
+  if (nearHorizontalWall) {
+    float seed = idx * 17.0 + u_tick * 0.618;
+    vec2 jitter = vec2(hash(seed), hash(seed + 13.0)) * 2.0 - 1.0;
+    float jitterLen = max(length(jitter), 0.001);
+    jitter /= jitterLen;
+    fx += jitter.x * ${BOUNDARY_JITTER};
+    fy += jitter.y * ${BOUNDARY_JITTER * 0.25};
+  }
+
+  if (isForce) {
+    float totalF = sqrt(fx * fx + fy * fy);
+    float attrF = sqrt(fAttrX * fAttrX + fAttrY * fAttrY);
+    float repF = sqrt(fRepX * fRepX + fRepY * fRepY);
+    float adhF = sqrt(fAdhX * fAdhX + fAdhY * fAdhY);
+    float stF = sqrt(fStX * fStX + fStY * fStY);
+    gl_FragColor = vec4(totalF, attrF, repF, stF);
+    return;
+  }
+
+  vel.x += fx;
+  vel.y += fy;
+  vel.x *= (1.0 - u_frictionAir);
+  vel.y *= (1.0 - u_frictionAir);
+
+  vec2 newPos = pos + vel;
 
   float br = u_bodyRadius;
   if (newPos.x < br) { newPos.x = br; vel.x *= -0.3; }
@@ -264,28 +310,69 @@ void main() {
 `;
 }
 
+function buildSpacingFragment(): string {
+  return `
+precision highp float;
+
+uniform sampler2D u_state;
+uniform float u_numParticles;
+
+#define NUM_PARTICLES ${MAX_PARTICLES}
+
+void main() {
+  float idx = floor(gl_FragCoord.x);
+  if (idx >= u_numParticles) discard;
+
+  vec2 uv = vec2((idx + 0.5) / (u_numParticles * 2.0), 0.5);
+  vec2 pos = texture2D(u_state, uv).rg;
+  float nearestSq = 1e20;
+
+  for (int i = 0; i < NUM_PARTICLES; i++) {
+    if (float(i) >= u_numParticles) continue;
+    if (float(i) == idx) continue;
+
+    vec2 oUV = vec2((float(i) + 0.5) / (u_numParticles * 2.0), 0.5);
+    vec2 otherPos = texture2D(u_state, oUV).rg;
+    vec2 diff = otherPos - pos;
+    float distSq = dot(diff, diff);
+    if (distSq < nearestSq) nearestSq = distSq;
+  }
+
+  gl_FragColor = vec4(sqrt(nearestSq), 0.0, 0.0, 1.0);
+}
+`;
+}
+
 export class GPUSimulation {
   gl: WebGL2RenderingContext;
   numParticles: number = NUM_PARTICLES;
+  numGlyphs: number = 0;
   currentRead: number = 0;
 
-  densityProgram: WebGLProgram;
-  forceProgram: WebGLProgram;
-  densityUniforms: Record<string, WebGLUniformLocation | null>;
-  forceUniforms: Record<string, WebGLUniformLocation | null>;
+  simProgram: WebGLProgram;
+  spacingProgram: WebGLProgram;
+  simQuadBuffer: WebGLBuffer;
 
-  quadBuffer: WebGLBuffer;
-
-  stateA: WebGLTexture;
-  stateB: WebGLTexture;
   fbA: WebGLFramebuffer;
   fbB: WebGLFramebuffer;
+  spacingFB: WebGLFramebuffer;
+  stateA: WebGLTexture;
+  stateB: WebGLTexture;
+  spacingTexture: WebGLTexture;
 
-  densityTex: WebGLTexture;
-  densityFB: WebGLFramebuffer;
+  glyphTexture: WebGLTexture;
+  glyphData: Float32Array;
+
+  simUniforms: Record<string, WebGLUniformLocation | null>;
+  spacingUniforms: Record<string, WebGLUniformLocation | null>;
 
   canvasWidth: number;
   canvasHeight: number;
+  tick: number = 0;
+
+  private forceReadBuffer: Float32Array;
+  private spacingReadBuffer: Float32Array;
+  private stateReadBuffer: Float32Array;
 
   constructor(
     gl: WebGL2RenderingContext,
@@ -300,68 +387,68 @@ export class GPUSimulation {
     if (!ext) console.warn("EXT_color_buffer_float not supported");
 
     const vs = createShader(gl, gl.VERTEX_SHADER, VERT_SOURCE)!;
-
-    const densityFS = createShader(
+    const fs = createShader(gl, gl.FRAGMENT_SHADER, buildSimFragment())!;
+    const spacingFs = createShader(
       gl,
       gl.FRAGMENT_SHADER,
-      buildDensityFragment(),
+      buildSpacingFragment(),
     )!;
-    this.densityProgram = createProgram(gl, vs, densityFS)!;
+    this.simProgram = createProgram(gl, vs, fs)!;
+    this.spacingProgram = createProgram(gl, vs, spacingFs)!;
 
-    const forceFS = createShader(gl, gl.FRAGMENT_SHADER, buildForceFragment())!;
-    this.forceProgram = createProgram(gl, vs, forceFS)!;
-
-    this.densityUniforms = {};
-    for (const name of [
+    this.simUniforms = {};
+    const uniformNames = [
       "u_state",
+      "u_glyphs",
       "u_numParticles",
-      "u_h",
-      "u_mass",
-      "u_restDensity",
+      "u_numGlyphs",
+      "u_stickiness",
       "u_stiffness",
-    ]) {
-      this.densityUniforms[name] = gl.getUniformLocation(
-        this.densityProgram,
+      "u_surfaceTension",
+      "u_adhesive",
+      "u_smoothingRadius",
+      "u_interactionRange",
+      "u_bodyRadius",
+      "u_maxForce",
+      "u_overlapForceMax",
+      "u_frictionAir",
+      "u_gravity",
+      "u_canvasSize",
+      "u_targetNeighbors",
+      "u_tick",
+    ];
+    for (const name of uniformNames) {
+      this.simUniforms[name] = gl.getUniformLocation(this.simProgram, name);
+    }
+
+    this.spacingUniforms = {};
+    for (const name of ["u_state", "u_numParticles", "u_canvasSize"]) {
+      this.spacingUniforms[name] = gl.getUniformLocation(
+        this.spacingProgram,
         name,
       );
     }
 
-    this.forceUniforms = {};
-    for (const name of [
-      "u_state",
-      "u_density",
-      "u_numParticles",
-      "u_h",
-      "u_mass",
-      "u_viscosity",
-      "u_surfaceTension",
-      "u_canvasSize",
-      "u_frictionAir",
-      "u_gravity",
-      "u_bodyRadius",
-      "u_dt",
-    ]) {
-      this.forceUniforms[name] = gl.getUniformLocation(this.forceProgram, name);
-    }
-
-    this.quadBuffer = gl.createBuffer()!;
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.quadBuffer);
+    this.simQuadBuffer = gl.createBuffer()!;
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.simQuadBuffer);
     gl.bufferData(
       gl.ARRAY_BUFFER,
       new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]),
       gl.STATIC_DRAW,
     );
 
-    const initData = new Float32Array(NUM_PARTICLES * 4);
-    for (let i = 0; i < NUM_PARTICLES; i++) {
+    const textureWidth = this.numParticles * 2;
+    const initData = new Float32Array(textureWidth * 4);
+    for (let i = 0; i < this.numParticles; i++) {
       initData[i * 4] = Math.random() * canvasWidth;
       initData[i * 4 + 1] = Math.random() * canvasHeight;
       initData[i * 4 + 2] = 0;
       initData[i * 4 + 3] = 0;
     }
 
-    this.stateA = createFloatTexture(gl, NUM_PARTICLES, initData);
-    this.stateB = createFloatTexture(gl, NUM_PARTICLES);
+    this.stateA = createFloatTexture(gl, textureWidth, initData);
+    this.stateB = createFloatTexture(gl, textureWidth, initData.slice());
+    this.spacingTexture = createFloatTexture(gl, this.numParticles);
 
     this.fbA = gl.createFramebuffer()!;
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbA);
@@ -385,86 +472,89 @@ export class GPUSimulation {
     );
     console.log("fbB status:", gl.checkFramebufferStatus(gl.FRAMEBUFFER));
 
-    this.densityTex = createFloatTexture(gl, NUM_PARTICLES);
-    this.densityFB = gl.createFramebuffer()!;
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.densityFB);
+    this.spacingFB = gl.createFramebuffer()!;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.spacingFB);
     gl.framebufferTexture2D(
       gl.FRAMEBUFFER,
       gl.COLOR_ATTACHMENT0,
       gl.TEXTURE_2D,
-      this.densityTex,
+      this.spacingTexture,
       0,
     );
-    console.log("densityFB status:", gl.checkFramebufferStatus(gl.FRAMEBUFFER));
+    console.log("spacingFB status:", gl.checkFramebufferStatus(gl.FRAMEBUFFER));
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+    this.glyphData = new Float32Array(MAX_GLYPHS * 4);
+    this.glyphTexture = createFloatTexture(gl, MAX_GLYPHS, this.glyphData);
+
+    this.forceReadBuffer = new Float32Array(this.numParticles * 4);
+    this.spacingReadBuffer = new Float32Array(this.numParticles * 4);
+    this.stateReadBuffer = new Float32Array(this.numParticles * 4);
   }
 
-  step(_params: SimParams, _cursorX: number, _cursorY: number) {
+  step(params: SimParams) {
     const gl = this.gl;
-    const params = _params;
     let readFromA = this.currentRead === 0;
+    const textureWidth = this.numParticles * 2;
 
     for (let s = 0; s < params.substeps; s++) {
+      this.tick += 1;
       const readTex = readFromA ? this.stateA : this.stateB;
-
-      gl.bindFramebuffer(gl.FRAMEBUFFER, this.densityFB);
-      gl.viewport(0, 0, this.numParticles, 1);
-      gl.clearColor(0, 0, 0, 0);
-      gl.clear(gl.COLOR_BUFFER_BIT);
-
-      gl.useProgram(this.densityProgram);
-      gl.activeTexture(gl.TEXTURE0);
-      gl.bindTexture(gl.TEXTURE_2D, readTex);
-      gl.uniform1i(this.densityUniforms["u_state"], 0);
-      gl.uniform1f(this.densityUniforms["u_numParticles"], this.numParticles);
-      gl.uniform1f(this.densityUniforms["u_h"], params.h);
-      gl.uniform1f(this.densityUniforms["u_mass"], params.particleMass);
-      gl.uniform1f(this.densityUniforms["u_restDensity"], params.restDensity);
-      gl.uniform1f(this.densityUniforms["u_stiffness"], params.stiffness);
-
-      const posLoc1 = gl.getAttribLocation(this.densityProgram, "a_position");
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.quadBuffer);
-      gl.enableVertexAttribArray(posLoc1);
-      gl.vertexAttribPointer(posLoc1, 2, gl.FLOAT, false, 0, 0);
-      gl.drawArrays(gl.TRIANGLES, 0, 6);
-
       const writeFB = readFromA ? this.fbB : this.fbA;
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, writeFB);
-      gl.viewport(0, 0, this.numParticles, 1);
+      gl.viewport(0, 0, textureWidth, 1);
       gl.clearColor(0, 0, 0, 0);
       gl.clear(gl.COLOR_BUFFER_BIT);
 
-      gl.useProgram(this.forceProgram);
+      gl.useProgram(this.simProgram);
 
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, readTex);
-      gl.uniform1i(this.forceUniforms["u_state"], 0);
+      gl.uniform1i(this.simUniforms["u_state"], 0);
 
       gl.activeTexture(gl.TEXTURE1);
-      gl.bindTexture(gl.TEXTURE_2D, this.densityTex);
-      gl.uniform1i(this.forceUniforms["u_density"], 1);
+      gl.bindTexture(gl.TEXTURE_2D, this.glyphTexture);
+      gl.uniform1i(this.simUniforms["u_glyphs"], 1);
 
-      gl.uniform1f(this.forceUniforms["u_numParticles"], this.numParticles);
-      gl.uniform1f(this.forceUniforms["u_h"], params.h);
-      gl.uniform1f(this.forceUniforms["u_mass"], params.particleMass);
-      gl.uniform1f(this.forceUniforms["u_viscosity"], params.viscosity);
-      gl.uniform1f(this.forceUniforms["u_surfaceTension"], params.surfaceTension);
+      gl.uniform1f(this.simUniforms["u_numParticles"], this.numParticles);
+      gl.uniform1f(this.simUniforms["u_numGlyphs"], this.numGlyphs);
+      gl.uniform1f(this.simUniforms["u_stickiness"], params.stickiness);
+      gl.uniform1f(this.simUniforms["u_stiffness"], params.stiffness);
+      gl.uniform1f(this.simUniforms["u_surfaceTension"], params.surfaceTension);
+      gl.uniform1f(this.simUniforms["u_adhesive"], params.adhesive);
+      gl.uniform1f(
+        this.simUniforms["u_smoothingRadius"],
+        params.smoothingRadius,
+      );
+      gl.uniform1f(
+        this.simUniforms["u_interactionRange"],
+        params.interactionRange,
+      );
+      gl.uniform1f(this.simUniforms["u_bodyRadius"], params.bodyRadius);
+      gl.uniform1f(this.simUniforms["u_maxForce"], params.maxForce);
+      gl.uniform1f(
+        this.simUniforms["u_overlapForceMax"],
+        params.overlapForceMax,
+      );
+      gl.uniform1f(this.simUniforms["u_frictionAir"], params.frictionAir);
+      gl.uniform1f(this.simUniforms["u_gravity"], params.gravity);
       gl.uniform2f(
-        this.forceUniforms["u_canvasSize"],
+        this.simUniforms["u_canvasSize"],
         this.canvasWidth,
         this.canvasHeight,
       );
-      gl.uniform1f(this.forceUniforms["u_frictionAir"], params.frictionAir);
-      gl.uniform1f(this.forceUniforms["u_gravity"], params.gravity);
-      gl.uniform1f(this.forceUniforms["u_bodyRadius"], params.bodyRadius);
-      gl.uniform1f(this.forceUniforms["u_dt"], params.dt);
+      gl.uniform1f(
+        this.simUniforms["u_targetNeighbors"],
+        params.targetNeighbors,
+      );
+      gl.uniform1f(this.simUniforms["u_tick"], this.tick);
 
-      const posLoc2 = gl.getAttribLocation(this.forceProgram, "a_position");
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.quadBuffer);
-      gl.enableVertexAttribArray(posLoc2);
-      gl.vertexAttribPointer(posLoc2, 2, gl.FLOAT, false, 0, 0);
+      const posLoc = gl.getAttribLocation(this.simProgram, "a_position");
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.simQuadBuffer);
+      gl.enableVertexAttribArray(posLoc);
+      gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
       gl.drawArrays(gl.TRIANGLES, 0, 6);
 
       readFromA = !readFromA;
@@ -472,6 +562,172 @@ export class GPUSimulation {
 
     this.currentRead = readFromA ? 0 : 1;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  }
+
+  readForceAverages(): ForceAverages {
+    const gl = this.gl;
+    const readFB = this.currentRead === 0 ? this.fbA : this.fbB;
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, readFB);
+    gl.readPixels(
+      this.numParticles,
+      0,
+      this.numParticles,
+      1,
+      gl.RGBA,
+      gl.FLOAT,
+      this.forceReadBuffer,
+    );
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+    let totalSum = 0,
+      cohSum = 0,
+      repSum = 0,
+      stSum = 0;
+    let count = 0;
+    for (let i = 0; i < this.numParticles; i++) {
+      const total = this.forceReadBuffer[i * 4];
+      const coh = this.forceReadBuffer[i * 4 + 1];
+      const rep = this.forceReadBuffer[i * 4 + 2];
+      const st = this.forceReadBuffer[i * 4 + 3];
+      if (total > 0) {
+        totalSum += total;
+        cohSum += coh;
+        repSum += rep;
+        stSum += st;
+        count++;
+      }
+    }
+    const n = Math.max(count, 1);
+    return {
+      total: totalSum / n,
+      attraction: cohSum / n,
+      repulsion: repSum / n,
+      surfaceTension: stSum / n,
+      adhesion: 0,
+    };
+  }
+
+  readSpacingStats(): SpacingStats {
+    const gl = this.gl;
+    const readTex = this.currentRead === 0 ? this.stateA : this.stateB;
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.spacingFB);
+    gl.viewport(0, 0, this.numParticles, 1);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.useProgram(this.spacingProgram);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, readTex);
+    gl.uniform1i(this.spacingUniforms["u_state"], 0);
+    gl.uniform1f(this.spacingUniforms["u_numParticles"], this.numParticles);
+    gl.uniform2f(
+      this.spacingUniforms["u_canvasSize"],
+      this.canvasWidth,
+      this.canvasHeight,
+    );
+
+    const posLoc = gl.getAttribLocation(this.spacingProgram, "a_position");
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.simQuadBuffer);
+    gl.enableVertexAttribArray(posLoc);
+    gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+    gl.readPixels(
+      0,
+      0,
+      this.numParticles,
+      1,
+      gl.RGBA,
+      gl.FLOAT,
+      this.spacingReadBuffer,
+    );
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+    let nearestSum = 0;
+    let globalMin = Infinity;
+    let count = 0;
+    const maxReasonable = Math.hypot(this.canvasWidth, this.canvasHeight);
+
+    for (let i = 0; i < this.numParticles; i++) {
+      const nearest = this.spacingReadBuffer[i * 4];
+      if (!Number.isFinite(nearest) || nearest < 0 || nearest > maxReasonable) {
+        continue;
+      }
+      nearestSum += nearest;
+      if (nearest < globalMin) globalMin = nearest;
+      count++;
+    }
+
+    if (count === 0) {
+      return {
+        meanNearest: 0,
+        minNearest: 0,
+      };
+    }
+
+    return {
+      meanNearest: nearestSum / count,
+      minNearest: globalMin,
+    };
+  }
+
+  readVelocityStats(): VelocityStats {
+    const gl = this.gl;
+    const readFB = this.currentRead === 0 ? this.fbA : this.fbB;
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, readFB);
+    gl.readPixels(
+      0,
+      0,
+      this.numParticles,
+      1,
+      gl.RGBA,
+      gl.FLOAT,
+      this.stateReadBuffer,
+    );
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+    let speedSum = 0;
+    let maxSpeed = 0;
+
+    for (let i = 0; i < this.numParticles; i++) {
+      const vx = this.stateReadBuffer[i * 4 + 2];
+      const vy = this.stateReadBuffer[i * 4 + 3];
+      const speed = Math.hypot(vx, vy);
+      speedSum += speed;
+      if (speed > maxSpeed) maxSpeed = speed;
+    }
+
+    return {
+      meanSpeed: speedSum / this.numParticles,
+      maxSpeed,
+    };
+  }
+
+  updateGlyphs(positions: { x: number; y: number }[]) {
+    const gl = this.gl;
+    this.numGlyphs = Math.min(positions.length, MAX_GLYPHS);
+    this.glyphData.fill(0);
+    for (let i = 0; i < this.numGlyphs; i++) {
+      this.glyphData[i * 4] = positions[i].x;
+      this.glyphData[i * 4 + 1] = positions[i].y;
+      this.glyphData[i * 4 + 2] = 0;
+      this.glyphData[i * 4 + 3] = 0;
+    }
+    gl.bindTexture(gl.TEXTURE_2D, this.glyphTexture);
+    gl.texImage2D(
+      gl.TEXTURE_2D,
+      0,
+      gl.RGBA32F,
+      MAX_GLYPHS,
+      1,
+      0,
+      gl.RGBA,
+      gl.FLOAT,
+      this.glyphData,
+    );
   }
 
   getCurrentStateTexture(): WebGLTexture {
@@ -487,8 +743,9 @@ export class GPUSimulation {
     const gl = this.gl;
     this.canvasWidth = canvasWidth;
     this.canvasHeight = canvasHeight;
-    const initData = new Float32Array(NUM_PARTICLES * 4);
-    for (let i = 0; i < NUM_PARTICLES; i++) {
+    const textureWidth = this.numParticles * 2;
+    const initData = new Float32Array(textureWidth * 4);
+    for (let i = 0; i < this.numParticles; i++) {
       initData[i * 4] = Math.random() * canvasWidth;
       initData[i * 4 + 1] = Math.random() * canvasHeight;
       initData[i * 4 + 2] = 0;
@@ -499,7 +756,7 @@ export class GPUSimulation {
       gl.TEXTURE_2D,
       0,
       gl.RGBA32F,
-      NUM_PARTICLES,
+      textureWidth,
       1,
       0,
       gl.RGBA,
@@ -511,12 +768,12 @@ export class GPUSimulation {
       gl.TEXTURE_2D,
       0,
       gl.RGBA32F,
-      NUM_PARTICLES,
+      textureWidth,
       1,
       0,
       gl.RGBA,
       gl.FLOAT,
-      null,
+      initData.slice(),
     );
   }
 }

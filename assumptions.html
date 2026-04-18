@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>liquid-font assumptions</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 20px;
+        background: #0b0d12;
+        color: #e5e7eb;
+        font: 14px/1.4 monospace;
+      }
+      h1,
+      h2 {
+        margin: 0 0 12px;
+        font-size: 16px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 16px;
+      }
+      .panel {
+        padding: 14px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: #131722;
+      }
+      .controls {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 10px 16px;
+      }
+      label {
+        display: grid;
+        grid-template-columns: 90px 1fr 56px;
+        gap: 8px;
+        align-items: center;
+      }
+      input[type="range"] {
+        width: 100%;
+      }
+      .value {
+        text-align: right;
+      }
+      pre {
+        margin: 0;
+        white-space: pre-wrap;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 8px;
+      }
+      th,
+      td {
+        padding: 4px 6px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        text-align: right;
+      }
+      th:first-child,
+      td:first-child {
+        text-align: left;
+      }
+      .ok {
+        color: #86efac;
+      }
+      .warn {
+        color: #fca5a5;
+      }
+      a {
+        color: #93c5fd;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="grid">
+      <div class="panel">
+        <h1>Pair-Force Assumptions</h1>
+        <div class="controls" id="controls"></div>
+      </div>
+      <div class="panel">
+        <h2>Invariant Checks</h2>
+        <pre id="checks"></pre>
+      </div>
+      <div class="panel">
+        <h2>Single Distance</h2>
+        <pre id="single"></pre>
+      </div>
+      <div class="panel">
+        <h2>CPU vs GPU</h2>
+        <pre id="gpucompare"></pre>
+      </div>
+      <div class="panel">
+        <h2>Two-Particle One Step</h2>
+        <pre id="twobody"></pre>
+      </div>
+      <div class="panel" style="grid-column: 1 / -1">
+        <h2>Sample Distances</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>distance</th>
+              <th>attraction</th>
+              <th>repulsion</th>
+              <th>net</th>
+            </tr>
+          </thead>
+          <tbody id="samples"></tbody>
+        </table>
+      </div>
+    </div>
+    <p style="margin-top: 16px">Main sim: <a href="/">/</a></p>
+    <canvas id="gpu-test" width="1" height="1" hidden></canvas>
+    <script type="module" src="/src/assumptions.ts"></script>
+  </body>
+</html>
