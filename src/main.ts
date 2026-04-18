@@ -5,7 +5,6 @@ const gl = canvas.getContext('webgl2')!;
 if (!gl) throw new Error('WebGL2 not supported');
 gl.getExtension('EXT_color_buffer_float');
 
-const bodyRadius = 4;
 const dpr = window.devicePixelRatio || 1;
 const controls = document.getElementById('controls')!;
 let canvasWidth = window.innerWidth;
@@ -16,35 +15,43 @@ canvas.height = canvasHeight * dpr;
 canvas.style.width = canvasWidth + 'px';
 canvas.style.height = canvasHeight + 'px';
 
-let cohesionCoeff = 0.01;
-let repulsionCoeff = 0.005;
+let h = 25;
+let restDensity = 1;
+let stiffness = 500;
+let viscosity = 50;
+let particleMass = 175;
+let gravity = 0.5;
+let dt = 0.5;
 
-const cohesionSlider = document.getElementById('cohesionCoeff') as HTMLInputElement;
-const cohesionVal = document.getElementById('cohesionCoeffVal')!;
-const repulsionSlider = document.getElementById('repulsionCoeff') as HTMLInputElement;
-const repulsionVal = document.getElementById('repulsionCoeffVal')!;
+function bindSlider(id: string, valId: string, setter: (v: number) => void, decimals: number = 0) {
+  const slider = document.getElementById(id) as HTMLInputElement;
+  const valSpan = document.getElementById(valId)!;
+  slider.addEventListener('input', () => {
+    const v = parseFloat(slider.value);
+    setter(v);
+    valSpan.textContent = v.toFixed(decimals);
+  });
+}
 
-cohesionSlider.addEventListener('input', () => {
-  cohesionCoeff = parseFloat(cohesionSlider.value);
-  cohesionVal.textContent = cohesionCoeff.toFixed(4);
-});
-repulsionSlider.addEventListener('input', () => {
-  repulsionCoeff = parseFloat(repulsionSlider.value);
-  repulsionVal.textContent = repulsionCoeff.toFixed(4);
-});
+bindSlider('h', 'hVal', v => h = v, 0);
+bindSlider('restDensity', 'restDensityVal', v => restDensity = v, 2);
+bindSlider('stiffness', 'stiffnessVal', v => stiffness = v, 0);
+bindSlider('viscosity', 'viscosityVal', v => viscosity = v, 1);
+bindSlider('particleMass', 'particleMassVal', v => particleMass = v, 1);
+bindSlider('gravity', 'gravityVal', v => gravity = v, 2);
+bindSlider('dt', 'dtVal', v => dt = v, 3);
 
 const params: SimParams = {
-  cohesion: 13,
-  repulsion: 10,
-  surfaceTension: 144,
-  substeps: 3,
-  gravity: 1,
-  bodyRadius: bodyRadius,
-  smoothingRadius: 50,
-  repulsionDistance: bodyRadius * 2.5,
+  h: h,
+  restDensity: restDensity,
+  stiffness: stiffness,
+  viscosity: viscosity,
+  particleMass: particleMass,
+  bodyRadius: 4,
   frictionAir: 0.01,
-  cohesionCoeff: cohesionCoeff,
-  repulsionCoeff: repulsionCoeff,
+  gravity: gravity,
+  substeps: 4,
+  dt: dt,
 };
 
 const sim = new GPUSimulation(gl, canvasWidth, canvasHeight);
@@ -57,7 +64,7 @@ uniform float u_pointSize;
 uniform vec2 u_resolution;
 void main() {
   float idx = float(gl_VertexID);
-  vec2 uv = vec2((idx + 0.5) / (u_numParticles * 2.0), 0.5);
+  vec2 uv = vec2((idx + 0.5) / u_numParticles, 0.5);
   vec4 state = texture(u_state, uv);
   vec2 pos = state.rg;
   gl_Position = vec4((pos.x / u_resolution.x) * 2.0 - 1.0,
@@ -94,15 +101,17 @@ const pointUniforms = {
 };
 const pointVAO = gl.createVertexArray()!;
 
-const mouse = { x: canvasWidth / 2, y: canvasHeight / 2 };
-canvas.addEventListener('mousemove', (e) => { mouse.x = e.clientX; mouse.y = e.clientY; });
-
 function render() {
-  params.cohesionCoeff = cohesionCoeff;
-  params.repulsionCoeff = repulsionCoeff;
-  sim.step(params, mouse.x, mouse.y);
+  params.h = h;
+  params.restDensity = restDensity;
+  params.stiffness = stiffness;
+  params.viscosity = viscosity;
+  params.particleMass = particleMass;
+  params.gravity = gravity;
+  params.dt = dt;
 
-  // Render particles to screen
+  sim.step(params, 0, 0);
+
   const stateTex = sim.getCurrentStateTexture();
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   gl.viewport(0, 0, canvas.width, canvas.height);

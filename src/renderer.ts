@@ -35,7 +35,7 @@ uniform float u_pointSize;
 uniform vec2 u_resolution;
 void main() {
   float idx = float(gl_VertexID);
-  vec2 uv = vec2((idx + 0.5) / (u_numParticles * 2.0), 0.5);
+  vec2 uv = vec2((idx + 0.5) / u_numParticles, 0.5);
   vec4 state = texture(u_state, uv);
   vec2 pos = state.rg;
   vec2 ndc = vec2((pos.x / u_resolution.x) * 2.0 - 1.0,
