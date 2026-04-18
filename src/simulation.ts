@@ -34,9 +34,9 @@ export interface VelocityStats {
   maxSpeed: number;
 }
 
-const MAX_PARTICLES = 4000;
+const MAX_PARTICLES = 8000;
 const MAX_GLYPHS = 4096;
-const NUM_PARTICLES = 4000;
+const NUM_PARTICLES = 8000;
 const BOUNDARY_JITTER = 0.0002;
 
 function createShader(
@@ -145,7 +145,8 @@ uniform float u_tick;
 
 #define NUM_PARTICLES ${MAX_PARTICLES}
 #define NUM_GLYPHS ${MAX_GLYPHS}
-#define SECONDARY_FORCE_SCALE 0.01
+#define ADHESION_FORCE_SCALE 0.01
+#define SURFACE_TENSION_FORCE_SCALE 0.1
 
 ${PAIR_FORCE_GLSL}
 
@@ -246,7 +247,7 @@ void main() {
       float dist = sqrt(distSq);
       float nx = diff.x / dist;
       float ny = diff.y / dist;
-      float adh = u_adhesive * SECONDARY_FORCE_SCALE / dist * surfaceness;
+      float adh = u_adhesive * ADHESION_FORCE_SCALE / dist * surfaceness;
       adh = min(adh, u_maxForce);
       fAdhX += nx * adh;
       fAdhY += ny * adh;
@@ -254,19 +255,17 @@ void main() {
   }
 
   int totalNeighbors = fluidNeighbors + staticNeighbors;
-  float deficit = max(0.0, u_targetNeighbors - float(totalNeighbors));
+  float totalWeight = u_stickiness + u_adhesive;
+  if (totalWeight < 0.001) totalWeight = 1.0;
+  vec2 blendNormal = (u_stickiness * fluidNormal + u_adhesive * staticNormal) / totalWeight;
+  float normalLen = length(blendNormal);
+  float boundaryScore = normalLen / max(float(totalNeighbors), 1.0);
 
-  if (deficit > 0.0) {
-    float totalWeight = u_stickiness + u_adhesive;
-    if (totalWeight < 0.001) totalWeight = 1.0;
-    vec2 blendNormal = (u_stickiness * fluidNormal + u_adhesive * staticNormal) / totalWeight;
-    float normalLen = length(blendNormal);
-    if (normalLen > 0.001) {
-      float stForce = u_surfaceTension * SECONDARY_FORCE_SCALE * deficit;
-      stForce = min(stForce, u_maxForce * 5.0);
-      fStX -= (blendNormal.x / normalLen) * stForce;
-      fStY -= (blendNormal.y / normalLen) * stForce;
-    }
+  if (boundaryScore > 0.01) {
+    float stForce = u_surfaceTension * SURFACE_TENSION_FORCE_SCALE * boundaryScore;
+    stForce = min(stForce, u_overlapForceMax);
+    fStX -= (blendNormal.x / normalLen) * stForce;
+    fStY -= (blendNormal.y / normalLen) * stForce;
   }
 
   fx += fAttrX + fRepX + fStX + fAdhX;
