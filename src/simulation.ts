@@ -134,8 +134,8 @@ fbA: WebGLFramebuffer;
 
     const initData = new Float32Array(this.numParticles * 4);
     for (let i = 0; i < this.numParticles; i++) {
-      initData[i * 4] = canvasWidth * 0.5 + (i - this.numParticles * 0.5) * 0.5;
-      initData[i * 4 + 1] = canvasHeight * 0.5;
+      initData[i * 4] = Math.random() * canvasWidth;
+      initData[i * 4 + 1] = Math.random() * canvasHeight;
       initData[i * 4 + 2] = 0;
       initData[i * 4 + 3] = 0;
     }
@@ -254,8 +254,8 @@ void main() {
     this.canvasHeight = canvasHeight;
     const initData = new Float32Array(this.numParticles * 4);
     for (let i = 0; i < this.numParticles; i++) {
-      initData[i * 4] = canvasWidth * 0.5 + (i - this.numParticles * 0.5) * 0.5;
-      initData[i * 4 + 1] = canvasHeight * 0.5;
+      initData[i * 4] = Math.random() * canvasWidth;
+      initData[i * 4 + 1] = Math.random() * canvasHeight;
       initData[i * 4 + 2] = 0;
       initData[i * 4 + 3] = 0;
     }
