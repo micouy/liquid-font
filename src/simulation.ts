@@ -34,9 +34,9 @@ export interface VelocityStats {
   maxSpeed: number;
 }
 
-const MAX_PARTICLES = 1000;
+const MAX_PARTICLES = 4000;
 const MAX_GLYPHS = 4096;
-const NUM_PARTICLES = 1000;
+const NUM_PARTICLES = 4000;
 const BOUNDARY_JITTER = 0.0002;
 
 function createShader(

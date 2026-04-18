@@ -23,15 +23,15 @@ canvas.style.height = canvasHeight + "px";
 
 const bodyRadius = 4;
 
-let stickiness = 8;
+let stickiness = 1;
 let stiffness = 10;
-let surfaceTension = 0;
+let surfaceTension = 2;
 let adhesive = 12;
 let smoothingRadius = bodyRadius * 3.5;
-let interactionRange = 4;
+let interactionRange = 2.5;
 let maxForce = 0.05;
-let overlapForceMax = 0.5;
-let frictionAir = 0.003;
+let overlapForceMax = 1;
+let frictionAir = 0.004;
 let gravity = 0.05;
 
 function bindSlider(
