@@ -23,16 +23,52 @@ canvas.style.height = canvasHeight + "px";
 
 const bodyRadius = 4;
 
-let stickiness = 1;
-let stiffness = 10;
-let surfaceTension = 2;
+let stickiness = 6;
+let stiffness = 15;
+let surfaceTension = 13;
 let adhesive = 12;
 let smoothingRadius = bodyRadius * 3.5;
 let interactionRange = 2.5;
 let maxForce = 0.05;
 let overlapForceMax = 1;
 let frictionAir = 0.004;
-let gravity = 0.05;
+let gravity = 0.14;
+const cursorForce = 0.75;
+const cursorRadius = 10;
+
+let pointerDown = false;
+let pointerTargetX = canvasWidth * 0.5;
+let pointerTargetY = canvasHeight * 0.5;
+let pointerX = pointerTargetX;
+let pointerY = pointerTargetY;
+let prevPointerX = pointerX;
+let prevPointerY = pointerY;
+let pointerVelX = 0;
+let pointerVelY = 0;
+let pointerActive = 0;
+
+function updatePointerFromEvent(event: PointerEvent | MouseEvent) {
+  const rect = canvas.getBoundingClientRect();
+  pointerTargetX = ((event.clientX - rect.left) / rect.width) * canvasWidth;
+  pointerTargetY = ((event.clientY - rect.top) / rect.height) * canvasHeight;
+}
+
+canvas.addEventListener("pointerdown", (event) => {
+  pointerDown = true;
+  updatePointerFromEvent(event);
+});
+
+window.addEventListener("pointermove", (event) => {
+  updatePointerFromEvent(event);
+});
+
+window.addEventListener("pointerup", () => {
+  pointerDown = false;
+});
+
+window.addEventListener("pointercancel", () => {
+  pointerDown = false;
+});
 
 function bindSlider(
   id: string,
@@ -93,6 +129,13 @@ const params: SimParams = {
   overlapForceMax: overlapForceMax,
   frictionAir: frictionAir,
   gravity: gravity,
+  cursorX: pointerX,
+  cursorY: pointerY,
+  cursorVelX: pointerVelX,
+  cursorVelY: pointerVelY,
+  cursorActive: pointerActive,
+  cursorForce: cursorForce,
+  cursorRadius: cursorRadius,
   targetNeighbors: 6,
   substeps: 3,
 };
@@ -290,6 +333,14 @@ function drawTimeline() {
 let frameCount = 0;
 
 function render() {
+  prevPointerX = pointerX;
+  prevPointerY = pointerY;
+  pointerX += (pointerTargetX - pointerX) * 0.22;
+  pointerY += (pointerTargetY - pointerY) * 0.22;
+  pointerVelX = pointerX - prevPointerX;
+  pointerVelY = pointerY - prevPointerY;
+  pointerActive += ((pointerDown ? 1 : 0) - pointerActive) * 0.18;
+
   params.stickiness = stickiness;
   params.stiffness = stiffness;
   params.surfaceTension = surfaceTension;
@@ -300,6 +351,11 @@ function render() {
   params.overlapForceMax = overlapForceMax;
   params.frictionAir = frictionAir;
   params.gravity = gravity;
+  params.cursorX = pointerX;
+  params.cursorY = pointerY;
+  params.cursorVelX = pointerVelX;
+  params.cursorVelY = pointerVelY;
+  params.cursorActive = pointerActive;
 
   sim.step(params);
 
@@ -356,6 +412,10 @@ window.addEventListener("resize", () => {
   canvas.height = canvasHeight * dpr;
   canvas.style.width = canvasWidth + "px";
   canvas.style.height = canvasHeight + "px";
+  pointerTargetX = Math.min(pointerTargetX, canvasWidth);
+  pointerTargetY = Math.min(pointerTargetY, canvasHeight);
+  pointerX = Math.min(pointerX, canvasWidth);
+  pointerY = Math.min(pointerY, canvasHeight);
   sim.resize(canvasWidth, canvasHeight);
   resizeTimeline();
 });

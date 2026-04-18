@@ -12,6 +12,13 @@ export interface SimParams {
   overlapForceMax: number;
   frictionAir: number;
   gravity: number;
+  cursorX: number;
+  cursorY: number;
+  cursorVelX: number;
+  cursorVelY: number;
+  cursorActive: number;
+  cursorForce: number;
+  cursorRadius: number;
   targetNeighbors: number;
   substeps: number;
 }
@@ -139,6 +146,11 @@ uniform float u_maxForce;
 uniform float u_overlapForceMax;
 uniform float u_frictionAir;
 uniform float u_gravity;
+uniform vec2 u_cursor;
+uniform vec2 u_cursorVelocity;
+uniform float u_cursorActive;
+uniform float u_cursorForce;
+uniform float u_cursorRadius;
 uniform vec2 u_canvasSize;
 uniform float u_targetNeighbors;
 uniform float u_tick;
@@ -270,6 +282,34 @@ void main() {
 
   fx += fAttrX + fRepX + fStX + fAdhX;
   fy += fAttrY + fRepY + fStY + fAdhY;
+
+  if (u_cursorActive > 0.001) {
+    vec2 cursorDiff = u_cursor - pos;
+    float cursorDist = length(cursorDiff);
+    if (cursorDist > 0.001) {
+      vec2 cursorDir = cursorDiff / cursorDist;
+      float cursorFalloff = 1.0 - smoothstep(u_cursorRadius, u_cursorRadius * 4.0, cursorDist);
+      float cursorPull = u_cursorActive * u_cursorForce * cursorFalloff * cursorFalloff;
+      float radialSpeed = dot(vel, cursorDir);
+      float cursorDamping = max(0.0, radialSpeed) * u_cursorActive * cursorFalloff * 0.35;
+      fx += cursorDir.x * (cursorPull - cursorDamping);
+      fy += cursorDir.y * (cursorPull - cursorDamping);
+
+      float cursorSpeed = length(u_cursorVelocity);
+      float carryFalloff = 1.0 - smoothstep(u_cursorRadius, u_cursorRadius * 1.6, cursorDist);
+      if (cursorSpeed > 0.05 && carryFalloff > 0.0) {
+        vec2 cursorVelDelta = u_cursorVelocity - vel;
+        float velocityBlend = u_cursorActive * carryFalloff * carryFalloff * 0.08;
+        vel += cursorVelDelta * velocityBlend;
+
+        float particleSpeed = length(vel);
+        float maxCarrySpeed = cursorSpeed + 0.2;
+        if (particleSpeed > maxCarrySpeed && particleSpeed > 0.001) {
+          vel *= maxCarrySpeed / particleSpeed;
+        }
+      }
+    }
+  }
 
   bool nearHorizontalWall = pos.y < u_bodyRadius * 2.0 || pos.y > u_canvasSize.y - u_bodyRadius * 2.0;
   if (nearHorizontalWall) {
@@ -412,6 +452,11 @@ export class GPUSimulation {
       "u_overlapForceMax",
       "u_frictionAir",
       "u_gravity",
+      "u_cursor",
+      "u_cursorVelocity",
+      "u_cursorActive",
+      "u_cursorForce",
+      "u_cursorRadius",
       "u_canvasSize",
       "u_targetNeighbors",
       "u_tick",
@@ -539,6 +584,19 @@ export class GPUSimulation {
       );
       gl.uniform1f(this.simUniforms["u_frictionAir"], params.frictionAir);
       gl.uniform1f(this.simUniforms["u_gravity"], params.gravity);
+      gl.uniform2f(
+        this.simUniforms["u_cursor"],
+        params.cursorX,
+        params.cursorY,
+      );
+      gl.uniform2f(
+        this.simUniforms["u_cursorVelocity"],
+        params.cursorVelX,
+        params.cursorVelY,
+      );
+      gl.uniform1f(this.simUniforms["u_cursorActive"], params.cursorActive);
+      gl.uniform1f(this.simUniforms["u_cursorForce"], params.cursorForce);
+      gl.uniform1f(this.simUniforms["u_cursorRadius"], params.cursorRadius);
       gl.uniform2f(
         this.simUniforms["u_canvasSize"],
         this.canvasWidth,
