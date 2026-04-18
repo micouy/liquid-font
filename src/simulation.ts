@@ -1,27 +1,20 @@
 export interface SimParams {
   cohesion: number;
   repulsion: number;
-  adhesive: number;
-  cursorForce: number;
-  radius: number;
-  threshold: number;
-  power: number;
-  influence: number;
-  maxForce: number;
-  frictionAir: number;
-  forceDistance: number;
-  surfaceTension: number;
-  substeps: number;
-  thickness: number;
-  gravity: number;
-  bodyRadius: number;
   smoothingRadius: number;
   repulsionDistance: number;
+  bodyRadius: number;
+  frictionAir: number;
+  gravity: number;
+  surfaceTension: number;
+  substeps: number;
+  cohesionCoeff: number;
+  repulsionCoeff: number;
 }
 
-const MAX_PARTICLES = 2048;
+const MAX_PARTICLES = 3000;
 const MAX_GLYPHS = 8192;
-const NUM_PARTICLES = 1000;
+const NUM_PARTICLES = 3000;
 
 function createShader(gl: WebGLRenderingContext, type: number, source: string): WebGLShader | null {
   const shader = gl.createShader(type);
@@ -50,7 +43,7 @@ function createProgram(gl: WebGLRenderingContext, vs: WebGLShader, fs: WebGLShad
   return program;
 }
 
-function createFloatTexture(gl: WebGLRenderingContext, width: number, data?: Float32Array): WebGLTexture {
+function createFloatTexture(gl: WebGL2RenderingContext, width: number, data?: Float32Array): WebGLTexture {
   const tex = gl.createTexture()!;
   gl.bindTexture(gl.TEXTURE_2D, tex);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
@@ -58,15 +51,15 @@ function createFloatTexture(gl: WebGLRenderingContext, width: number, data?: Flo
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
   if (data) {
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, 1, 0, gl.RGBA, gl.FLOAT, data);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, width, 1, 0, gl.RGBA, gl.FLOAT, data);
   } else {
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, 1, 0, gl.RGBA, gl.FLOAT, null);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, width, 1, 0, gl.RGBA, gl.FLOAT, null);
   }
   return tex;
 }
 
 export class GPUSimulation {
-  gl: WebGLRenderingContext;
+  gl: WebGL2RenderingContext;
   numParticles: number;
   numGlyphs: number = 0;
   currentRead: number = 0;
@@ -87,21 +80,14 @@ export class GPUSimulation {
   canvasWidth: number;
   canvasHeight: number;
 
-  constructor(gl: WebGLRenderingContext, canvasWidth: number, canvasHeight: number) {
+  constructor(gl: WebGL2RenderingContext, canvasWidth: number, canvasHeight: number) {
     this.gl = gl;
     this.numParticles = NUM_PARTICLES;
     this.canvasWidth = canvasWidth;
     this.canvasHeight = canvasHeight;
 
-    const ext = gl.getExtension('OES_texture_float');
-    if (!ext) throw new Error('OES_texture_float not supported');
-    gl.getExtension('OES_texture_float_linear');
-    const floatExt = gl.getExtension('WEBGL_color_buffer_float');
-    if (floatExt) {
-      console.log('WEBGL_color_buffer_float supported');
-    } else {
-      console.warn('WEBGL_color_buffer_float NOT supported - float rendering may not work');
-    }
+    const ext = gl.getExtension('EXT_color_buffer_float');
+    if (!ext) console.warn('EXT_color_buffer_float not supported');
 
     const vsSource = `
       attribute vec2 a_position;
@@ -121,7 +107,8 @@ export class GPUSimulation {
       'u_state', 'u_canvasSize', 'u_numParticles',
       'u_frictionAir', 'u_gravity', 'u_bodyRadius',
       'u_smoothingRadius', 'u_surfaceTension', 'u_targetNeighbors',
-      'u_cohesion', 'u_repulsion', 'u_repulsionDistance'
+      'u_cohesion', 'u_repulsion', 'u_repulsionDistance',
+      'u_cohesionCoeff', 'u_repulsionCoeff'
 ];
     for (const name of uniformNames) {
       this.simUniforms[name] = gl.getUniformLocation(this.simProgram, name);
@@ -177,6 +164,8 @@ uniform float u_targetNeighbors;
 uniform float u_cohesion;
 uniform float u_repulsion;
 uniform float u_repulsionDistance;
+uniform float u_cohesionCoeff;
+uniform float u_repulsionCoeff;
 
 #define NUM_PARTICLES ${MAX_PARTICLES}
 
@@ -215,47 +204,43 @@ void main() {
     if (float(i) >= u_numParticles) continue;
     if (float(i) == idx) continue;
 
-    vec2 oUV = vec2((float(i) + 0.5) / u_numParticles, 0.5);
+    vec2 oUV = vec2((float(i) + 0.5) / (u_numParticles * 2.0), 0.5);
     vec4 other = texture2D(u_state, oUV);
     float dx = other.r - px;
     float dy = other.g - py;
     float distSq = dx * dx + dy * dy;
 
-    if (distSq < smoothR2 && distSq > 0.01) {
-      neighborCount++;
-      float invDist = 1.0 / sqrt(distSq);
-      normX -= dx * invDist;
-      normY -= dy * invDist;
-    }
+    if (distSq > smoothR2 || distSq < 0.01) continue;
 
-    if (distSq > 0.01) {
-      float dist = sqrt(distSq);
-      float nx = dx / dist;
-      float ny = dy / dist;
+    neighborCount++;
+    float invDist = 1.0 / sqrt(distSq);
+    normX -= dx * invDist;
+    normY -= dy * invDist;
 
-      if (dist < repDist) {
-        float rep = u_repulsion * 0.001 / (dist * dist);
-        repulsionMag += rep;
-        fx -= nx * rep;
-        fy -= ny * rep;
-      } else if (distSq < smoothR2) {
-        float coh = u_cohesion * 0.001 / dist;
-        cohesionMag += coh;
-        fx += nx * coh;
-        fy += ny * coh;
-      }
+    float dist = 1.0 / invDist;
+    float nx = dx * invDist;
+    float ny = dy * invDist;
+
+    if (dist < repDist) {
+      float rep = u_repulsion * u_repulsionCoeff / (dist * dist);
+      repulsionMag += rep;
+      fx -= nx * rep;
+      fy -= ny * rep;
+    } else {
+      float coh = u_cohesion * u_cohesionCoeff / dist;
+      cohesionMag += coh;
+      fx += nx * coh;
+      fy += ny * coh;
     }
   }
 
-  float deficit = u_targetNeighbors - float(neighborCount);
-  if (deficit > 0.0) {
-    float normalLen = sqrt(normX * normX + normY * normY);
-    if (normalLen > 0.001) {
-      float force = u_surfaceTension * 0.01 * deficit;
-      surfaceTensionMag = force;
-      fx -= (normX / normalLen) * force;
-      fy -= (normY / normalLen) * force;
-    }
+  float deficit = max(0.0, u_targetNeighbors - float(neighborCount));
+  float normalLen = length(vec2(normX, normY));
+  if (deficit > 0.0 && normalLen > 0.001) {
+    float force = u_surfaceTension * 0.0 * deficit;
+    surfaceTensionMag = force;
+    fx -= (normX / normalLen) * force;
+    fy -= (normY / normalLen) * force;
   }
 
   if (isForce) {
@@ -309,10 +294,12 @@ gl.viewport(0, 0, this.numParticles * 2, 1);
       gl.uniform1f(this.simUniforms['u_bodyRadius'], params.bodyRadius);
       gl.uniform1f(this.simUniforms['u_smoothingRadius'], params.smoothingRadius);
       gl.uniform1f(this.simUniforms['u_surfaceTension'], params.surfaceTension);
-      gl.uniform1f(this.simUniforms['u_targetNeighbors'], 6.0);
+      gl.uniform1f(this.simUniforms['u_targetNeighbors'], 20.0);
       gl.uniform1f(this.simUniforms['u_cohesion'], params.cohesion);
       gl.uniform1f(this.simUniforms['u_repulsion'], params.repulsion);
       gl.uniform1f(this.simUniforms['u_repulsionDistance'], params.repulsionDistance);
+      gl.uniform1f(this.simUniforms['u_cohesionCoeff'], params.cohesionCoeff);
+      gl.uniform1f(this.simUniforms['u_repulsionCoeff'], params.repulsionCoeff);
 
       const posLoc = gl.getAttribLocation(this.simProgram, 'a_position');
       gl.bindBuffer(gl.ARRAY_BUFFER, this.simQuadBuffer);
@@ -348,8 +335,8 @@ gl.viewport(0, 0, this.numParticles * 2, 1);
       initData[i * 4 + 3] = 0;
     }
     gl.bindTexture(gl.TEXTURE_2D, this.stateA);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, this.numParticles * 2, 1, 0, gl.RGBA, gl.FLOAT, initData);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, this.numParticles * 2, 1, 0, gl.RGBA, gl.FLOAT, initData);
     gl.bindTexture(gl.TEXTURE_2D, this.stateB);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, this.numParticles * 2, 1, 0, gl.RGBA, gl.FLOAT, null);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, this.numParticles * 2, 1, 0, gl.RGBA, gl.FLOAT, null);
   }
 }

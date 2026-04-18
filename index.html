@@ -13,39 +13,37 @@
             body {
                 background: #0a0a0f;
                 overflow: hidden;
+                display: flex;
+                flex-direction: column;
+                height: 100vh;
             }
             canvas {
-                display: block;
-            }
-            #overlay {
-                position: fixed;
-                top: 0;
-                left: 0;
-                pointer-events: none;
-                z-index: 100;
+                flex: 1;
             }
             #controls {
-                position: fixed;
-                bottom: 10px;
-                right: 10px;
                 background: rgba(0, 0, 0, 0.8);
-                padding: 15px;
-                border-radius: 8px;
+                padding: 10px;
                 color: #fff;
                 font-family: monospace;
                 font-size: 12px;
-                z-index: 1000;
             }
             #controls label {
-                display: block;
-                margin: 8px 0;
+                display: inline-block;
+                margin-right: 20px;
+            }
+            #controls label {
+                display: inline-block;
+                margin-right: 20px;
             }
             #controls input {
                 width: 150px;
             }
             #controls span {
                 display: inline-block;
-                width: 60px;
+                width: 80px;
+            }
+            canvas {
+                display: block;
             }
         </style>
     </head>
@@ -55,170 +53,26 @@
                 ><span>Cohesion:</span
                 ><input
                     type="range"
-                    id="cohesion"
+                    id="cohesionCoeff"
                     min="0"
-                    max="100"
-                    step="1"
-                    value="13"
-                /><span id="cohesionVal">13</span></label
+                    max="0.05"
+                    step="0.0005"
+                    value="0.01"
+                /><span id="cohesionCoeffVal">0.01</span></label
             >
             <label
                 ><span>Repulsion:</span
                 ><input
                     type="range"
-                    id="repulsion"
+                    id="repulsionCoeff"
                     min="0"
-                    max="20"
-                    step="1"
-                    value="10"
-                /><span id="repulsionVal">10</span></label
-            >
-            <label
-                ><span>Adhesive:</span
-                ><input
-                    type="range"
-                    id="adhesive"
-                    min="0"
-                    max="200"
-                    step="1"
-                    value="67"
-                /><span id="adhesiveVal">67</span></label
-            >
-            <label
-                ><span>Cursor:</span
-                ><input
-                    type="range"
-                    id="cursorForce"
-                    min="3"
-                    max="25"
-                    step="0.5"
-                    value="25"
-                /><span id="cursorVal">25</span></label
-            >
-            <label
-                ><span>Radius:</span
-                ><input
-                    type="range"
-                    id="radius"
-                    min="0"
-                    max="0.20"
-                    step="0.001"
-                    value="0.07"
-                /><span id="radiusVal">0.07</span></label
-            >
-            <label
-                ><span>Threshold:</span
-                ><input
-                    type="range"
-                    id="threshold"
-                    min="0"
-                    max="0.5"
-                    step="0.001"
-                    value="0.1"
-                /><span id="thresholdVal">0.1</span></label
-            >
-            <label
-                ><span>Power:</span
-                ><input
-                    type="range"
-                    id="power"
-                    min="0"
-                    max="1.2"
-                    step="0.001"
-                    value="1"
-                /><span id="powerVal">1</span></label
-            >
-            <label
-                ><span>Influence:</span
-                ><input
-                    type="range"
-                    id="influence"
-                    min="10"
-                    max="200"
-                    step="5"
-                    value="60"
-                /><span id="influenceVal">60</span></label
-            >
-            <label
-                ><span>Max Force:</span
-                ><input
-                    type="range"
-                    id="maxForce"
-                    min="0.00001"
-                    max="0.001"
-                    step="0.00001"
-                    value="0.00024"
-                /><span id="maxForceVal">0.00024</span></label
-            >
-            <label
-                ><span>Air Drag:</span
-                ><input
-                    type="range"
-                    id="frictionAir"
-                    min="0"
-                    max="0.2"
-                    step="0.01"
-                    value="0.15"
-                /><span id="frictionAirVal">0.15</span></label
-            >
-            <label
-                ><span>Force Dist:</span
-                ><input
-                    type="range"
-                    id="forceDistance"
-                    min="1"
-                    max="6"
-                    step="0.5"
-                    value="2"
-                /><span id="forceDistanceVal">2</span></label
-            >
-            <label
-                ><span>Surface Ten:</span
-                ><input
-                    type="range"
-                    id="surfaceTension"
-                    min="0"
-                    max="200"
-                    step="1"
-                    value="144"
-                /><span id="surfaceTensionVal">144</span></label
-            >
-            <label
-                ><span>Substeps:</span
-                ><input
-                    type="range"
-                    id="substeps"
-                    min="1"
-                    max="3"
-                    step="1"
-                    value="3"
-                /><span id="substepsVal">3</span></label
-            >
-            <label
-                ><span>Thickness:</span
-                ><input
-                    type="range"
-                    id="thickness"
-                    min="1"
-                    max="10"
-                    step="1"
-                    value="7"
-                /><span id="thicknessVal">7</span></label
-            >
-            <label
-                ><span>Gravity:</span
-                ><input
-                    type="range"
-                    id="gravity"
-                    min="0"
-                    max="10"
-                    step="0.1"
-                    value="3"
-                /><span id="gravityVal">3</span></label
+                    max="0.05"
+                    step="0.0005"
+                    value="0.005"
+                /><span id="repulsionCoeffVal">0.005</span></label
             >
         </div>
         <canvas id="canvas"></canvas>
-        <canvas id="overlay"></canvas>
         <script type="module" src="/src/main.ts"></script>
     </body>
 </html>
