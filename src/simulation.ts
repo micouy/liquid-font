@@ -74,7 +74,7 @@ export class GPUSimulation {
   simProgram: WebGLProgram;
   simQuadBuffer: WebGLBuffer;
 
-fbA: WebGLFramebuffer;
+  fbA: WebGLFramebuffer;
   fbB: WebGLFramebuffer;
   stateA: WebGLTexture;
   stateB: WebGLTexture;
@@ -119,8 +119,10 @@ fbA: WebGLFramebuffer;
     this.simUniforms = {};
     const uniformNames = [
       'u_state', 'u_canvasSize', 'u_numParticles',
-      'u_frictionAir', 'u_gravity', 'u_bodyRadius'
-    ];
+      'u_frictionAir', 'u_gravity', 'u_bodyRadius',
+      'u_smoothingRadius', 'u_surfaceTension', 'u_targetNeighbors',
+      'u_cohesion', 'u_repulsion', 'u_repulsionDistance'
+];
     for (const name of uniformNames) {
       this.simUniforms[name] = gl.getUniformLocation(this.simProgram, name);
     }
@@ -132,7 +134,7 @@ fbA: WebGLFramebuffer;
       -1, 1, 1, -1, 1, 1
     ]), gl.STATIC_DRAW);
 
-    const initData = new Float32Array(this.numParticles * 4);
+    const initData = new Float32Array(this.numParticles * 2 * 4);
     for (let i = 0; i < this.numParticles; i++) {
       initData[i * 4] = Math.random() * canvasWidth;
       initData[i * 4 + 1] = Math.random() * canvasHeight;
@@ -140,8 +142,8 @@ fbA: WebGLFramebuffer;
       initData[i * 4 + 3] = 0;
     }
 
-    this.stateA = createFloatTexture(gl, this.numParticles, initData);
-    this.stateB = createFloatTexture(gl, this.numParticles, initData.slice());
+    this.stateA = createFloatTexture(gl, this.numParticles * 2, initData);
+    this.stateB = createFloatTexture(gl, this.numParticles * 2, initData.slice());
 
     this.fbA = gl.createFramebuffer()!;
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbA);
@@ -169,21 +171,101 @@ uniform float u_numParticles;
 uniform float u_frictionAir;
 uniform float u_gravity;
 uniform float u_bodyRadius;
+uniform float u_smoothingRadius;
+uniform float u_surfaceTension;
+uniform float u_targetNeighbors;
+uniform float u_cohesion;
+uniform float u_repulsion;
+uniform float u_repulsionDistance;
 
 #define NUM_PARTICLES ${MAX_PARTICLES}
 
 void main() {
-  float idx = floor(gl_FragCoord.x);
-  if (idx >= u_numParticles) discard;
+  float pxIdx = floor(gl_FragCoord.x);
+  bool isForce = false;
+  float idx = pxIdx;
+  if (idx >= u_numParticles) {
+    idx -= u_numParticles;
+    isForce = true;
+  }
+  if (idx >= u_numParticles || idx < 0.0) discard;
 
-  vec2 uv = vec2((idx + 0.5) / u_numParticles, 0.5);
+  vec2 uv = vec2((idx + 0.5) / (u_numParticles * 2.0), 0.5);
   vec4 state = texture2D(u_state, uv);
   float px = state.r;
   float py = state.g;
   float vx = state.b;
   float vy = state.a;
 
-  vy += u_gravity * 0.1;
+  float fx = 0.0;
+  float fy = u_gravity * 0.1;
+
+  float smoothR = u_smoothingRadius;
+  float smoothR2 = smoothR * smoothR;
+  float repDist = u_repulsionDistance;
+  int neighborCount = 0;
+  float normX = 0.0;
+  float normY = 0.0;
+
+  float cohesionMag = 0.0;
+  float repulsionMag = 0.0;
+  float surfaceTensionMag = 0.0;
+
+  for (int i = 0; i < NUM_PARTICLES; i++) {
+    if (float(i) >= u_numParticles) continue;
+    if (float(i) == idx) continue;
+
+    vec2 oUV = vec2((float(i) + 0.5) / u_numParticles, 0.5);
+    vec4 other = texture2D(u_state, oUV);
+    float dx = other.r - px;
+    float dy = other.g - py;
+    float distSq = dx * dx + dy * dy;
+
+    if (distSq < smoothR2 && distSq > 0.01) {
+      neighborCount++;
+      float invDist = 1.0 / sqrt(distSq);
+      normX -= dx * invDist;
+      normY -= dy * invDist;
+    }
+
+    if (distSq > 0.01) {
+      float dist = sqrt(distSq);
+      float nx = dx / dist;
+      float ny = dy / dist;
+
+      if (dist < repDist) {
+        float rep = u_repulsion * 0.001 / (dist * dist);
+        repulsionMag += rep;
+        fx -= nx * rep;
+        fy -= ny * rep;
+      } else if (distSq < smoothR2) {
+        float coh = u_cohesion * 0.001 / dist;
+        cohesionMag += coh;
+        fx += nx * coh;
+        fy += ny * coh;
+      }
+    }
+  }
+
+  float deficit = u_targetNeighbors - float(neighborCount);
+  if (deficit > 0.0) {
+    float normalLen = sqrt(normX * normX + normY * normY);
+    if (normalLen > 0.001) {
+      float force = u_surfaceTension * 0.01 * deficit;
+      surfaceTensionMag = force;
+      fx -= (normX / normalLen) * force;
+      fy -= (normY / normalLen) * force;
+    }
+  }
+
+  if (isForce) {
+    float totalForce = sqrt(fx * fx + fy * fy);
+    gl_FragColor = vec4(totalForce, cohesionMag, repulsionMag, surfaceTensionMag);
+    return;
+  }
+
+  vx += fx;
+  vy += fy;
   vx *= (1.0 - u_frictionAir);
   vy *= (1.0 - u_frictionAir);
 
@@ -210,7 +292,7 @@ void main() {
       const writeFB = readFromA ? this.fbB : this.fbA;
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, writeFB);
-      gl.viewport(0, 0, this.numParticles, 1);
+gl.viewport(0, 0, this.numParticles * 2, 1);
       gl.clearColor(0, 0, 0, 0);
       gl.clear(gl.COLOR_BUFFER_BIT);
 
@@ -225,6 +307,12 @@ void main() {
       gl.uniform1f(this.simUniforms['u_frictionAir'], params.frictionAir);
       gl.uniform1f(this.simUniforms['u_gravity'], params.gravity);
       gl.uniform1f(this.simUniforms['u_bodyRadius'], params.bodyRadius);
+      gl.uniform1f(this.simUniforms['u_smoothingRadius'], params.smoothingRadius);
+      gl.uniform1f(this.simUniforms['u_surfaceTension'], params.surfaceTension);
+      gl.uniform1f(this.simUniforms['u_targetNeighbors'], 6.0);
+      gl.uniform1f(this.simUniforms['u_cohesion'], params.cohesion);
+      gl.uniform1f(this.simUniforms['u_repulsion'], params.repulsion);
+      gl.uniform1f(this.simUniforms['u_repulsionDistance'], params.repulsionDistance);
 
       const posLoc = gl.getAttribLocation(this.simProgram, 'a_position');
       gl.bindBuffer(gl.ARRAY_BUFFER, this.simQuadBuffer);
@@ -252,7 +340,7 @@ void main() {
     const gl = this.gl;
     this.canvasWidth = canvasWidth;
     this.canvasHeight = canvasHeight;
-    const initData = new Float32Array(this.numParticles * 4);
+    const initData = new Float32Array(this.numParticles * 2 * 4);
     for (let i = 0; i < this.numParticles; i++) {
       initData[i * 4] = Math.random() * canvasWidth;
       initData[i * 4 + 1] = Math.random() * canvasHeight;
@@ -260,8 +348,8 @@ void main() {
       initData[i * 4 + 3] = 0;
     }
     gl.bindTexture(gl.TEXTURE_2D, this.stateA);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, this.numParticles, 1, 0, gl.RGBA, gl.FLOAT, initData);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, this.numParticles * 2, 1, 0, gl.RGBA, gl.FLOAT, initData);
     gl.bindTexture(gl.TEXTURE_2D, this.stateB);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, this.numParticles, 1, 0, gl.RGBA, gl.FLOAT, null);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, this.numParticles * 2, 1, 0, gl.RGBA, gl.FLOAT, null);
   }
 }
