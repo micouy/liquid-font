@@ -265,7 +265,7 @@ void main() {
     vec2 diff = glyph.rg - pos;
     float distSq = diff.x * diff.x + diff.y * diff.y;
 
-    float glyphRestDist = restDist * 1.15;
+    float glyphRestDist = restDist * 0.8;
     if (distSq < glyphRestDist * glyphRestDist) {
       float safeDistSq = max(distSq, 0.0001);
       float dist = sqrt(safeDistSq);
@@ -273,7 +273,7 @@ void main() {
       float ny = diff.y / dist;
       float overlap = (glyphRestDist - dist) / glyphRestDist;
       float glyphRepulsion = min(
-        u_stiffness * u_glyphRepulsion * 0.01 * overlap,
+        u_stiffness * u_glyphRepulsion * 0.04 * overlap,
         u_overlapForceMax
       );
       fRepX -= nx * glyphRepulsion;

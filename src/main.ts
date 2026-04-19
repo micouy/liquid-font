@@ -25,23 +25,23 @@ canvas.style.height = canvasHeight + "px";
 const bodyRadius = 4;
 
 let stickiness = 0;
-let stiffness = 20;
+let stiffness = 50;
 let surfaceTension = 20;
 let liquidNormalWeight = 1;
-let glyphNormalWeight = 2;
-let adhesive = 12;
-let glyphRepulsion = 2;
+let glyphNormalWeight = 3.7;
+let adhesive = 0;
+let glyphRepulsion = 0.5;
 let timeScale = 2;
 let smoothingRadius = bodyRadius * 3.5;
 let interactionRange = 2.5;
 let maxForce = 0.05;
 let overlapForceMax = 1;
-let frictionLiquid = 0.12;
-let frictionGlyph = 0.2;
+let frictionLiquid = 0.02;
+let frictionGlyph = 0.03;
 let gravity = 0.2;
-let cursorForce = 0.75;
+let cursorForce = 2.5;
 let niceRender = true;
-let substeps = 3;
+let substeps = 2;
 let nicePointSize = 18;
 let niceGlyphPointSize = 10;
 let niceBodyLow = 0.18;
@@ -50,6 +50,7 @@ let niceEdgeLow = 0.08;
 let niceEdgeHigh = 0.24;
 let niceMinDensity = 0.9;
 const cursorRadius = 10;
+const fpsVal = document.getElementById("fpsVal")!;
 
 let pointerDown = false;
 let pointerTargetX = canvasWidth * 0.5;
@@ -910,8 +911,14 @@ function drawTimeline() {
 }
 
 let frameCount = 0;
+let lastFrameTime = performance.now();
 
 function render() {
+  const now = performance.now();
+  const frameDt = Math.max(now - lastFrameTime, 0.0001);
+  fpsVal.textContent = (1000 / frameDt).toFixed(0);
+  lastFrameTime = now;
+
   prevPointerX = pointerX;
   prevPointerY = pointerY;
   pointerX += (pointerTargetX - pointerX) * 0.22;

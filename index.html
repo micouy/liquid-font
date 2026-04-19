@@ -75,6 +75,7 @@
             >nice</span
           ></label
         >
+        <label><span>fps:</span><span class="val" id="fpsVal">0</span></label>
         <label
           ><span>liquid attract:</span
           ><input
@@ -94,8 +95,8 @@
             min="0"
             max="120"
             step="1"
-            value="20"
-          /><span class="val" id="stiffnessVal">20</span></label
+            value="50"
+          /><span class="val" id="stiffnessVal">50</span></label
         >
         <label
           ><span>surface tension strength:</span
@@ -127,8 +128,8 @@
             min="0"
             max="4"
             step="0.1"
-            value="2.0"
-          /><span class="val" id="glyphNormalWeightVal">2.0</span></label
+            value="3.7"
+          /><span class="val" id="glyphNormalWeightVal">3.7</span></label
         >
         <label
           ><span>glyph adhesion:</span
@@ -138,8 +139,8 @@
             min="0"
             max="480"
             step="1"
-            value="12"
-          /><span class="val" id="adhesiveVal">12</span></label
+            value="0"
+          /><span class="val" id="adhesiveVal">0</span></label
         >
         <label
           ><span>glyph repulsion:</span
@@ -149,8 +150,8 @@
             min="0"
             max="8"
             step="0.1"
-            value="2.0"
-          /><span class="val" id="glyphRepulsionVal">2.0</span></label
+            value="0.5"
+          /><span class="val" id="glyphRepulsionVal">0.5</span></label
         >
         <label
           ><span>gravity:</span
@@ -171,8 +172,8 @@
             min="0"
             max="4"
             step="0.05"
-            value="0.75"
-          /><span class="val" id="cursorForceVal">0.75</span></label
+            value="2.50"
+          /><span class="val" id="cursorForceVal">2.50</span></label
         >
         <label
           ><span>time scale:</span
@@ -224,10 +225,10 @@
             type="range"
             id="frictionLiquid"
             min="0"
-            max="1"
-            step="0.01"
-            value="0.12"
-          /><span class="val" id="frictionLiquidVal">0.12</span></label
+            max="0.2"
+            step="0.005"
+            value="0.02"
+          /><span class="val" id="frictionLiquidVal">0.02</span></label
         >
         <label
           ><span>friction liquid-glyph:</span
@@ -235,10 +236,10 @@
             type="range"
             id="frictionGlyph"
             min="0"
-            max="1"
-            step="0.01"
-            value="0.20"
-          /><span class="val" id="frictionGlyphVal">0.20</span></label
+            max="0.2"
+            step="0.005"
+            value="0.03"
+          /><span class="val" id="frictionGlyphVal">0.03</span></label
         >
         <label
           ><span>substeps:</span
@@ -248,8 +249,8 @@
             min="1"
             max="12"
             step="1"
-            value="3"
-          /><span class="val" id="substepsVal">3</span></label
+            value="2"
+          /><span class="val" id="substepsVal">2</span></label
         >
       </div>
       <div class="control-column">
