@@ -24,17 +24,20 @@ canvas.style.height = canvasHeight + "px";
 
 const bodyRadius = 4;
 
-let stickiness = 6;
-let stiffness = 15;
-let surfaceTension = 13;
+let stickiness = 0;
+let stiffness = 20;
+let surfaceTension = 20;
+let liquidNormalWeight = 1;
+let glyphNormalWeight = 2;
 let adhesive = 12;
+let glyphRepulsion = 2;
 let smoothingRadius = bodyRadius * 3.5;
 let interactionRange = 2.5;
 let maxForce = 0.05;
 let overlapForceMax = 1;
-let frictionAir = 0.004;
-let gravity = 0.14;
-const cursorForce = 0.75;
+let frictionAir = 0.005;
+let gravity = 0.2;
+let cursorForce = 0.75;
 const cursorRadius = 10;
 
 let pointerDown = false;
@@ -101,7 +104,26 @@ bindSlider(
   (v) => (surfaceTension = v),
   0,
 );
+bindSlider(
+  "liquidNormalWeight",
+  "liquidNormalWeightVal",
+  (v) => (liquidNormalWeight = v),
+  1,
+);
+bindSlider(
+  "glyphNormalWeight",
+  "glyphNormalWeightVal",
+  (v) => (glyphNormalWeight = v),
+  1,
+);
 bindSlider("adhesive", "adhesiveVal", (v) => (adhesive = v), 0);
+bindSlider(
+  "glyphRepulsion",
+  "glyphRepulsionVal",
+  (v) => (glyphRepulsion = v),
+  1,
+);
+bindSlider("cursorForce", "cursorForceVal", (v) => (cursorForce = v), 2);
 bindSlider(
   "interactionRange",
   "interactionRangeVal",
@@ -122,7 +144,10 @@ const params: SimParams = {
   stickiness: stickiness,
   stiffness: stiffness,
   surfaceTension: surfaceTension,
+  liquidNormalWeight: liquidNormalWeight,
+  glyphNormalWeight: glyphNormalWeight,
   adhesive: adhesive,
+  glyphRepulsion: glyphRepulsion,
   smoothingRadius: smoothingRadius,
   interactionRange: interactionRange,
   bodyRadius: bodyRadius,
@@ -513,7 +538,10 @@ function render() {
   params.stickiness = stickiness;
   params.stiffness = stiffness;
   params.surfaceTension = surfaceTension;
+  params.liquidNormalWeight = liquidNormalWeight;
+  params.glyphNormalWeight = glyphNormalWeight;
   params.adhesive = adhesive;
+  params.glyphRepulsion = glyphRepulsion;
   params.smoothingRadius = smoothingRadius;
   params.interactionRange = interactionRange;
   params.maxForce = maxForce;
@@ -525,6 +553,7 @@ function render() {
   params.cursorVelX = pointerVelX;
   params.cursorVelY = pointerVelY;
   params.cursorActive = pointerActive;
+  params.cursorForce = cursorForce;
 
   sim.step(params);
 

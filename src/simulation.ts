@@ -4,7 +4,10 @@ export interface SimParams {
   stickiness: number;
   stiffness: number;
   surfaceTension: number;
+  liquidNormalWeight: number;
+  glyphNormalWeight: number;
   adhesive: number;
+  glyphRepulsion: number;
   smoothingRadius: number;
   interactionRange: number;
   bodyRadius: number;
@@ -138,7 +141,10 @@ uniform float u_numGlyphs;
 uniform float u_stickiness;
 uniform float u_stiffness;
 uniform float u_surfaceTension;
+uniform float u_liquidNormalWeight;
+uniform float u_glyphNormalWeight;
 uniform float u_adhesive;
+uniform float u_glyphRepulsion;
 uniform float u_smoothingRadius;
 uniform float u_interactionRange;
 uniform float u_bodyRadius;
@@ -157,7 +163,7 @@ uniform float u_tick;
 
 #define NUM_PARTICLES ${MAX_PARTICLES}
 #define NUM_GLYPHS ${MAX_GLYPHS}
-#define ADHESION_FORCE_SCALE 0.01
+#define ADHESION_FORCE_SCALE 0.03
 #define SURFACE_TENSION_FORCE_SCALE 0.1
 
 ${PAIR_FORCE_GLSL}
@@ -256,7 +262,7 @@ void main() {
       float ny = diff.y / dist;
       float overlap = (glyphRestDist - dist) / glyphRestDist;
       float glyphRepulsion = min(
-        u_stiffness * 0.02 * overlap,
+        u_stiffness * u_glyphRepulsion * 0.01 * overlap,
         u_overlapForceMax
       );
       fRepX -= nx * glyphRepulsion;
@@ -281,8 +287,12 @@ void main() {
     }
   }
 
-  float weightedNeighborCount = float(fluidNeighbors) + 2.0 * float(staticNeighbors);
-  vec2 blendNormal = (fluidNormal + 2.0 * staticNormal) / max(weightedNeighborCount, 1.0);
+  float weightedNeighborCount =
+    u_liquidNormalWeight * float(fluidNeighbors) +
+    u_glyphNormalWeight * float(staticNeighbors);
+  vec2 blendNormal =
+    (u_liquidNormalWeight * fluidNormal + u_glyphNormalWeight * staticNormal) /
+    max(weightedNeighborCount, 1.0);
   float normalLen = length(blendNormal);
   float boundaryScore = normalLen;
 
@@ -457,7 +467,10 @@ export class GPUSimulation {
       "u_stickiness",
       "u_stiffness",
       "u_surfaceTension",
+      "u_liquidNormalWeight",
+      "u_glyphNormalWeight",
       "u_adhesive",
+      "u_glyphRepulsion",
       "u_smoothingRadius",
       "u_interactionRange",
       "u_bodyRadius",
@@ -580,7 +593,16 @@ export class GPUSimulation {
       gl.uniform1f(this.simUniforms["u_stickiness"], params.stickiness);
       gl.uniform1f(this.simUniforms["u_stiffness"], params.stiffness);
       gl.uniform1f(this.simUniforms["u_surfaceTension"], params.surfaceTension);
+      gl.uniform1f(
+        this.simUniforms["u_liquidNormalWeight"],
+        params.liquidNormalWeight,
+      );
+      gl.uniform1f(
+        this.simUniforms["u_glyphNormalWeight"],
+        params.glyphNormalWeight,
+      );
       gl.uniform1f(this.simUniforms["u_adhesive"], params.adhesive);
+      gl.uniform1f(this.simUniforms["u_glyphRepulsion"], params.glyphRepulsion);
       gl.uniform1f(
         this.simUniforms["u_smoothingRadius"],
         params.smoothingRadius,

@@ -30,17 +30,21 @@
         font-family: monospace;
         font-size: 12px;
         display: flex;
-        flex-wrap: wrap;
-        gap: 4px 16px;
+        flex-direction: column;
+        gap: 6px;
       }
       #controls label {
-        display: inline-flex;
+        display: flex;
         align-items: center;
-        gap: 4px;
+        gap: 8px;
         white-space: nowrap;
       }
+      #controls label span:first-child {
+        width: 150px;
+      }
       #controls input {
-        width: 100px;
+        width: 180px;
+        flex: 0 0 auto;
       }
       #controls span.val {
         display: inline-block;
@@ -57,51 +61,106 @@
   <body>
     <div id="controls">
       <label
-        ><span>stickiness:</span
+        ><span>liquid attract:</span
         ><input
           type="range"
           id="stickiness"
           min="0"
           max="60"
           step="1"
-          value="6"
-        /><span class="val" id="stickinessVal">6</span></label
+          value="0"
+        /><span class="val" id="stickinessVal">0</span></label
       >
       <label
-        ><span>stiffness:</span
+        ><span>liquid repel:</span
         ><input
           type="range"
           id="stiffness"
           min="0"
-          max="20"
+          max="120"
           step="1"
-          value="15"
-        /><span class="val" id="stiffnessVal">15</span></label
+          value="20"
+        /><span class="val" id="stiffnessVal">20</span></label
       >
       <label
-        ><span>surfTen:</span
+        ><span>surface tension strength:</span
         ><input
           type="range"
           id="surfaceTension"
           min="0"
           max="200"
           step="1"
-          value="13"
-        /><span class="val" id="surfaceTensionVal">13</span></label
+          value="20"
+        /><span class="val" id="surfaceTensionVal">20</span></label
       >
       <label
-        ><span>adhesive:</span
+        ><span>liquid normal weight:</span
+        ><input
+          type="range"
+          id="liquidNormalWeight"
+          min="0"
+          max="4"
+          step="0.1"
+          value="1.0"
+        /><span class="val" id="liquidNormalWeightVal">1.0</span></label
+      >
+      <label
+        ><span>glyph normal weight:</span
+        ><input
+          type="range"
+          id="glyphNormalWeight"
+          min="0"
+          max="4"
+          step="0.1"
+          value="2.0"
+        /><span class="val" id="glyphNormalWeightVal">2.0</span></label
+      >
+      <label
+        ><span>glyph adhesion:</span
         ><input
           type="range"
           id="adhesive"
           min="0"
-          max="240"
+          max="480"
           step="1"
           value="12"
         /><span class="val" id="adhesiveVal">12</span></label
       >
       <label
-        ><span>range:</span
+        ><span>glyph repulsion:</span
+        ><input
+          type="range"
+          id="glyphRepulsion"
+          min="0"
+          max="8"
+          step="0.1"
+          value="2.0"
+        /><span class="val" id="glyphRepulsionVal">2.0</span></label
+      >
+      <label
+        ><span>gravity:</span
+        ><input
+          type="range"
+          id="gravity"
+          min="0"
+          max="0.2"
+          step="0.005"
+          value="0.2"
+        /><span class="val" id="gravityVal">0.200</span></label
+      >
+      <label
+        ><span>cursor force:</span
+        ><input
+          type="range"
+          id="cursorForce"
+          min="0"
+          max="4"
+          step="0.05"
+          value="0.75"
+        /><span class="val" id="cursorForceVal">0.75</span></label
+      >
+      <label
+        ><span>interaction range:</span
         ><input
           type="range"
           id="interactionRange"
@@ -112,7 +171,7 @@
         /><span class="val" id="interactionRangeVal">2.5</span></label
       >
       <label
-        ><span>maxForce:</span
+        ><span>attract cap:</span
         ><input
           type="range"
           id="maxForce"
@@ -123,7 +182,7 @@
         /><span class="val" id="maxForceVal">0.050</span></label
       >
       <label
-        ><span>overlapCap:</span
+        ><span>repel cap:</span
         ><input
           type="range"
           id="overlapForceMax"
@@ -141,19 +200,8 @@
           min="0"
           max="0.01"
           step="0.001"
-          value="0.004"
-        /><span class="val" id="frictionAirVal">0.004</span></label
-      >
-      <label
-        ><span>gravity:</span
-        ><input
-          type="range"
-          id="gravity"
-          min="0"
-          max="0.2"
-          step="0.005"
-          value="0.14"
-        /><span class="val" id="gravityVal">0.140</span></label
+          value="0.005"
+        /><span class="val" id="frictionAirVal">0.005</span></label
       >
     </div>
     <canvas id="timeline"></canvas>
