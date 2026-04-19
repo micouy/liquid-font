@@ -26,6 +26,7 @@ export interface SimParams {
   cursorRadius: number;
   targetNeighbors: number;
   substeps: number;
+  frameDtScale: number;
 }
 
 export interface ForceAverages {
@@ -592,7 +593,8 @@ export class GPUSimulation {
     const gl = this.gl;
     let readFromA = this.currentRead === 0;
     const textureWidth = this.numParticles * 2;
-    const dt = params.timeScale / Math.max(params.substeps, 1);
+    const dt =
+      (params.timeScale * params.frameDtScale) / Math.max(params.substeps, 1);
 
     for (let s = 0; s < params.substeps; s++) {
       this.tick += 1;

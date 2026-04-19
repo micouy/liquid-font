@@ -8,19 +8,13 @@ gl.getExtension("EXT_color_buffer_float");
 
 const timelineCanvas = document.getElementById("timeline") as HTMLCanvasElement;
 const tCtx = timelineCanvas.getContext("2d")!;
+const controls = document.getElementById("controls")!;
+const debugToggle = document.getElementById("debugToggle") as HTMLButtonElement;
 
 const dpr = window.devicePixelRatio || 1;
-const controls = document.getElementById("controls")!;
 let canvasWidth = window.innerWidth;
-let canvasHeight =
-  window.innerHeight -
-  controls.getBoundingClientRect().height -
-  (timelineCanvas?.offsetHeight || 80);
-
-canvas.width = canvasWidth * dpr;
-canvas.height = canvasHeight * dpr;
-canvas.style.width = canvasWidth + "px";
-canvas.style.height = canvasHeight + "px";
+let canvasHeight = 0;
+let simReady = false;
 
 const bodyRadius = 4;
 
@@ -41,6 +35,7 @@ let frictionGlyph = 0.03;
 let gravity = 0.2;
 let cursorForce = 2.5;
 let niceRender = true;
+let showDebugPanel = false;
 let substeps = 2;
 let nicePointSize = 18;
 let niceGlyphPointSize = 10;
@@ -51,6 +46,23 @@ let niceEdgeHigh = 0.24;
 let niceMinDensity = 0.9;
 const cursorRadius = 10;
 const fpsVal = document.getElementById("fpsVal")!;
+
+function updateCanvasLayout() {
+  controls.classList.toggle("hidden", !showDebugPanel);
+  timelineCanvas.classList.toggle("hidden", !showDebugPanel);
+  debugToggle.textContent = showDebugPanel ? "Debug: On" : "Debug: Off";
+  const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
+  const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
+  canvasWidth = viewportWidth;
+  canvasHeight = viewportHeight;
+  canvasHeight = Math.max(canvasHeight, 1);
+  canvas.width = canvasWidth * dpr;
+  canvas.height = canvasHeight * dpr;
+  canvas.style.width = canvasWidth + "px";
+  canvas.style.height = canvasHeight + "px";
+}
+
+updateCanvasLayout();
 
 let pointerDown = false;
 let pointerTargetX = canvasWidth * 0.5;
@@ -125,6 +137,16 @@ function bindToggle(
   applyValue();
   input.addEventListener("input", applyValue);
 }
+
+debugToggle.addEventListener("click", () => {
+  showDebugPanel = !showDebugPanel;
+  updateCanvasLayout();
+  if (!simReady) return;
+  sim.resize(canvasWidth, canvasHeight);
+  resizeDensityBuffer();
+  updateWordGlyphs();
+  resizeTimeline();
+});
 
 bindToggle("niceRender", "niceRenderVal", (v) => (niceRender = v), {
   on: "nice",
@@ -227,9 +249,11 @@ const params: SimParams = {
   cursorRadius: cursorRadius,
   targetNeighbors: 6,
   substeps: substeps,
+  frameDtScale: 1,
 };
 
 const sim = new GPUSimulation(gl, canvasWidth, canvasHeight);
+simReady = true;
 
 const glyphWord = "SILLY";
 const glyphHeightPx = 200;
@@ -912,11 +936,15 @@ function drawTimeline() {
 
 let frameCount = 0;
 let lastFrameTime = performance.now();
+let smoothedFrameDtScale = 1;
 
 function render() {
   const now = performance.now();
   const frameDt = Math.max(now - lastFrameTime, 0.0001);
   fpsVal.textContent = (1000 / frameDt).toFixed(0);
+  const targetFrameMs = 1000 / 60;
+  const rawFrameDtScale = Math.min(Math.max(frameDt / targetFrameMs, 0.5), 2.5);
+  smoothedFrameDtScale += (rawFrameDtScale - smoothedFrameDtScale) * 0.15;
   lastFrameTime = now;
 
   prevPointerX = pointerX;
@@ -949,6 +977,7 @@ function render() {
   params.cursorActive = pointerActive;
   params.cursorForce = cursorForce;
   params.substeps = substeps;
+  params.frameDtScale = smoothedFrameDtScale;
 
   sim.step(params);
 
@@ -983,15 +1012,7 @@ function render() {
 render();
 
 window.addEventListener("resize", () => {
-  canvasWidth = window.innerWidth;
-  canvasHeight =
-    window.innerHeight -
-    controls.getBoundingClientRect().height -
-    (timelineCanvas?.offsetHeight || 80);
-  canvas.width = canvasWidth * dpr;
-  canvas.height = canvasHeight * dpr;
-  canvas.style.width = canvasWidth + "px";
-  canvas.style.height = canvasHeight + "px";
+  updateCanvasLayout();
   pointerTargetX = Math.min(pointerTargetX, canvasWidth);
   pointerTargetY = Math.min(pointerTargetY, canvasHeight);
   pointerX = Math.min(pointerX, canvasWidth);
