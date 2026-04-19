@@ -1,3 +1,4 @@
+import { getUniformPoints, loadSvgGlyph } from "./glyphs";
 import { GPUSimulation, SimParams } from "./simulation";
 
 const canvas = document.getElementById("canvas") as HTMLCanvasElement;
@@ -142,17 +143,138 @@ const params: SimParams = {
 
 const sim = new GPUSimulation(gl, canvasWidth, canvasHeight);
 
+const glyphWord = "SILLY";
+const glyphHeightPx = 200;
+const glyphPointSpacingPx = 1.0;
+const glyphLetterGapPx = 14;
+
+type LoadedGlyph = Awaited<ReturnType<typeof loadSvgGlyph>>;
+
+let loadedWordGlyphs: LoadedGlyph[] | null = null;
+let currentGlyphPoints: { x: number; y: number }[] = [];
+let currentGlyphPointData = new Float32Array();
+let currentGlyphPointCount = 0;
+
+function createGlyphPointTexture(data?: Float32Array, width: number = 1) {
+  const tex = gl.createTexture()!;
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texImage2D(
+    gl.TEXTURE_2D,
+    0,
+    gl.RGBA32F,
+    width,
+    1,
+    0,
+    gl.RGBA,
+    gl.FLOAT,
+    data ?? new Float32Array(width * 4),
+  );
+  return tex;
+}
+
+const glyphPointTexture = createGlyphPointTexture();
+
+async function ensureWordGlyphs() {
+  if (loadedWordGlyphs) return loadedWordGlyphs;
+  loadedWordGlyphs = await Promise.all(
+    glyphWord.split("").map((char) => loadSvgGlyph(char)),
+  );
+  return loadedWordGlyphs;
+}
+
+async function updateWordGlyphs() {
+  const glyphs = await ensureWordGlyphs();
+  const layouts = glyphs
+    .map((glyph) => {
+      if (!glyph || glyph.height <= 0) return null;
+      const scale = glyphHeightPx / glyph.height;
+      return {
+        glyph,
+        scale,
+        width: glyph.width * scale,
+        height: glyph.height * scale,
+      };
+    })
+    .filter((layout): layout is NonNullable<typeof layout> => layout !== null);
+
+  const totalWidth = layouts.reduce(
+    (sum, layout, index) =>
+      sum + layout.width + (index < layouts.length - 1 ? glyphLetterGapPx : 0),
+    0,
+  );
+  let cursorX = (canvasWidth - totalWidth) * 0.5;
+  const baselineY = canvasHeight * 0.5;
+  const points: { x: number; y: number }[] = [];
+
+  for (const layout of layouts) {
+    const sourcePoints = getUniformPoints(
+      layout.glyph.subPaths,
+      glyphPointSpacingPx / layout.scale,
+    );
+    for (const point of sourcePoints) {
+      points.push({
+        x: cursorX + layout.width * 0.5 + point.x * layout.scale,
+        y: baselineY + point.y * layout.scale,
+      });
+    }
+    cursorX += layout.width + glyphLetterGapPx;
+  }
+
+  currentGlyphPoints = points;
+  currentGlyphPointCount = points.length;
+  currentGlyphPointData = new Float32Array(Math.max(points.length, 1) * 4);
+  for (let i = 0; i < points.length; i++) {
+    currentGlyphPointData[i * 4] = points[i].x;
+    currentGlyphPointData[i * 4 + 1] = points[i].y;
+  }
+  gl.bindTexture(gl.TEXTURE_2D, glyphPointTexture);
+  gl.texImage2D(
+    gl.TEXTURE_2D,
+    0,
+    gl.RGBA32F,
+    Math.max(points.length, 1),
+    1,
+    0,
+    gl.RGBA,
+    gl.FLOAT,
+    currentGlyphPointData,
+  );
+  console.log(`Loaded ${points.length} glyph points for ${glyphWord}`);
+  sim.updateGlyphs(points);
+}
+
+void updateWordGlyphs();
+
 const pointVS = `#version 300 es
 precision highp float;
 uniform sampler2D u_state;
 uniform float u_numParticles;
 uniform float u_pointSize;
 uniform vec2 u_resolution;
+out vec3 v_color;
 void main() {
   float idx = float(gl_VertexID);
   vec2 uv = vec2((idx + 0.5) / (u_numParticles * 2.0), 0.5);
   vec4 state = texture(u_state, uv);
+  vec2 forceUV = vec2((idx + u_numParticles + 0.5) / (u_numParticles * 2.0), 0.5);
+  vec4 force = texture(u_state, forceUV);
   vec2 pos = state.rg;
+  float totalForce = force.r;
+  float attractionForce = force.g;
+  float repulsionForce = force.b;
+  float surfaceForce = force.a;
+  float intensity = clamp(totalForce * 8.0, 0.25, 1.0);
+  if (repulsionForce >= attractionForce && repulsionForce >= surfaceForce) {
+    v_color = vec3(1.0, 0.2, 0.2) * intensity;
+  } else if (surfaceForce >= attractionForce) {
+    v_color = vec3(0.2, 0.7, 1.0) * intensity;
+  } else {
+    v_color = vec3(0.2, 1.0, 0.35) * intensity;
+  }
   gl_Position = vec4((pos.x / u_resolution.x) * 2.0 - 1.0,
                       (pos.y / u_resolution.y) * -2.0 + 1.0, 0.0, 1.0);
   gl_PointSize = u_pointSize;
@@ -160,11 +282,43 @@ void main() {
 `;
 const pointFS = `#version 300 es
 precision highp float;
+in vec3 v_color;
 out vec4 fragColor;
 void main() {
   vec2 coord = gl_PointCoord - vec2(0.5);
   if (dot(coord, coord) > 0.25) discard;
-  fragColor = vec4(0.0, 0.0, 0.0, 1.0);
+  fragColor = vec4(v_color, 1.0);
+}
+`;
+
+const glyphPointVS = `#version 300 es
+precision highp float;
+uniform sampler2D u_glyphPoints;
+uniform float u_numGlyphPoints;
+uniform vec2 u_resolution;
+uniform float u_pointSize;
+void main() {
+  float idx = float(gl_VertexID);
+  vec2 uv = vec2((idx + 0.5) / u_numGlyphPoints, 0.5);
+  vec4 glyph = texture(u_glyphPoints, uv);
+  vec2 a_position = glyph.rg;
+  gl_Position = vec4(
+    (a_position.x / u_resolution.x) * 2.0 - 1.0,
+    (a_position.y / u_resolution.y) * -2.0 + 1.0,
+    0.0,
+    1.0
+  );
+  gl_PointSize = u_pointSize;
+}
+`;
+
+const glyphPointFS = `#version 300 es
+precision highp float;
+out vec4 fragColor;
+void main() {
+  vec2 coord = gl_PointCoord - vec2(0.5);
+  if (dot(coord, coord) > 0.25) discard;
+  fragColor = vec4(1.0, 0.0, 0.65, 1.0);
 }
 `;
 
@@ -189,6 +343,21 @@ const pointUniforms = {
   u_resolution: gl.getUniformLocation(pointProgram, "u_resolution"),
 };
 const pointVAO = gl.createVertexArray()!;
+
+const glyphPointProgram = gl.createProgram()!;
+gl.attachShader(glyphPointProgram, mkShader(gl.VERTEX_SHADER, glyphPointVS)!);
+gl.attachShader(glyphPointProgram, mkShader(gl.FRAGMENT_SHADER, glyphPointFS)!);
+gl.linkProgram(glyphPointProgram);
+const glyphPointUniforms = {
+  u_glyphPoints: gl.getUniformLocation(glyphPointProgram, "u_glyphPoints"),
+  u_numGlyphPoints: gl.getUniformLocation(
+    glyphPointProgram,
+    "u_numGlyphPoints",
+  ),
+  u_resolution: gl.getUniformLocation(glyphPointProgram, "u_resolution"),
+  u_pointSize: gl.getUniformLocation(glyphPointProgram, "u_pointSize"),
+};
+const glyphPointVAO = gl.createVertexArray()!;
 
 const FORCE_HISTORY_LEN = 200;
 const forceHistory: {
@@ -397,6 +566,21 @@ function render() {
   gl.bindVertexArray(pointVAO);
   gl.drawArrays(gl.POINTS, 0, sim.numParticles);
 
+  if (currentGlyphPoints.length > 0) {
+    gl.useProgram(glyphPointProgram);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, glyphPointTexture);
+    gl.uniform1i(glyphPointUniforms["u_glyphPoints"], 1);
+    gl.uniform1f(
+      glyphPointUniforms["u_numGlyphPoints"],
+      currentGlyphPointCount,
+    );
+    gl.uniform2f(glyphPointUniforms["u_resolution"], canvasWidth, canvasHeight);
+    gl.uniform1f(glyphPointUniforms["u_pointSize"], 4.0 * dpr);
+    gl.bindVertexArray(glyphPointVAO);
+    gl.drawArrays(gl.POINTS, 0, currentGlyphPointCount);
+  }
+
   requestAnimationFrame(render);
 }
 
@@ -417,5 +601,6 @@ window.addEventListener("resize", () => {
   pointerX = Math.min(pointerX, canvasWidth);
   pointerY = Math.min(pointerY, canvasHeight);
   sim.resize(canvasWidth, canvasHeight);
+  updateWordGlyphs();
   resizeTimeline();
 });

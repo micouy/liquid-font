@@ -41,9 +41,9 @@ export interface VelocityStats {
   maxSpeed: number;
 }
 
-const MAX_PARTICLES = 8000;
+const MAX_PARTICLES = 4000;
 const MAX_GLYPHS = 4096;
-const NUM_PARTICLES = 8000;
+const NUM_PARTICLES = 4000; // 8192 is max
 const BOUNDARY_JITTER = 0.0002;
 
 function createShader(
@@ -248,6 +248,21 @@ void main() {
     vec2 diff = glyph.rg - pos;
     float distSq = diff.x * diff.x + diff.y * diff.y;
 
+    float glyphRestDist = restDist * 1.15;
+    if (distSq < glyphRestDist * glyphRestDist) {
+      float safeDistSq = max(distSq, 0.0001);
+      float dist = sqrt(safeDistSq);
+      float nx = diff.x / dist;
+      float ny = diff.y / dist;
+      float overlap = (glyphRestDist - dist) / glyphRestDist;
+      float glyphRepulsion = min(
+        u_stiffness * 0.02 * overlap,
+        u_overlapForceMax
+      );
+      fRepX -= nx * glyphRepulsion;
+      fRepY -= ny * glyphRepulsion;
+    }
+
     if (distSq < smoothRSq && distSq > 0.01) {
       staticNeighbors++;
       float invDist = 1.0 / sqrt(distSq);
@@ -266,12 +281,10 @@ void main() {
     }
   }
 
-  int totalNeighbors = fluidNeighbors + staticNeighbors;
-  float totalWeight = u_stickiness + u_adhesive;
-  if (totalWeight < 0.001) totalWeight = 1.0;
-  vec2 blendNormal = (u_stickiness * fluidNormal + u_adhesive * staticNormal) / totalWeight;
+  float weightedNeighborCount = float(fluidNeighbors) + 2.0 * float(staticNeighbors);
+  vec2 blendNormal = (fluidNormal + 2.0 * staticNormal) / max(weightedNeighborCount, 1.0);
   float normalLen = length(blendNormal);
-  float boundaryScore = normalLen / max(float(totalNeighbors), 1.0);
+  float boundaryScore = normalLen;
 
   if (boundaryScore > 0.01) {
     float stForce = u_surfaceTension * SURFACE_TENSION_FORCE_SCALE * boundaryScore;
