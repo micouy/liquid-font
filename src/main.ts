@@ -10,6 +10,12 @@ const timelineCanvas = document.getElementById("timeline") as HTMLCanvasElement;
 const tCtx = timelineCanvas.getContext("2d")!;
 const controls = document.getElementById("controls")!;
 const debugToggle = document.getElementById("debugToggle") as HTMLButtonElement;
+const fullscreenToggle = document.getElementById(
+  "fullscreenToggle",
+) as HTMLButtonElement;
+const motionToggle = document.getElementById(
+  "motionToggle",
+) as HTMLButtonElement;
 
 const dpr = window.devicePixelRatio || 1;
 let canvasWidth = window.innerWidth;
@@ -32,7 +38,7 @@ let maxForce = 0.05;
 let overlapForceMax = 1;
 let frictionLiquid = 0.02;
 let frictionGlyph = 0.03;
-let gravity = 0.2;
+let gravityStrength = 0.2;
 let cursorForce = 2.5;
 let niceRender = true;
 let showDebugPanel = false;
@@ -46,6 +52,132 @@ let niceEdgeHigh = 0.24;
 let niceMinDensity = 0.9;
 const cursorRadius = 10;
 const fpsVal = document.getElementById("fpsVal")!;
+let gravityDirX = 0;
+let gravityDirY = 1;
+let tiltGravityEnabled = false;
+let tiltSupportKnown = false;
+
+function updateFullscreenLabel() {
+  fullscreenToggle.textContent = document.fullscreenElement
+    ? "Exit Fullscreen"
+    : "Fullscreen";
+}
+
+function updateMotionToggleLabel(status?: string) {
+  if (status) {
+    motionToggle.textContent = status;
+    return;
+  }
+  if (!tiltSupportKnown) {
+    motionToggle.textContent = "Tilt: N/A";
+    motionToggle.disabled = true;
+    return;
+  }
+  motionToggle.disabled = false;
+  motionToggle.textContent = tiltGravityEnabled ? "Tilt: On" : "Tilt: Off";
+}
+
+function syncMotionGravityControl() {
+  const input = document.getElementById("motionGravity") as HTMLInputElement;
+  const val = document.getElementById("motionGravityVal")!;
+  input.checked = tiltGravityEnabled;
+  input.disabled = !tiltSupportKnown;
+  val.textContent = tiltSupportKnown
+    ? tiltGravityEnabled
+      ? "on"
+      : "off"
+    : "n/a";
+}
+
+function normalizeGravityDirection(x: number, y: number) {
+  const len = Math.hypot(x, y);
+  if (len < 0.001) return;
+  gravityDirX = x / len;
+  gravityDirY = y / len;
+}
+
+function mapAccelerationToScreen(ax: number, ay: number) {
+  const angle = window.screen.orientation?.angle ?? 0;
+  switch (((angle % 360) + 360) % 360) {
+    case 90:
+      return { x: -ay, y: -ax };
+    case 180:
+      return { x: -ax, y: ay };
+    case 270:
+      return { x: ay, y: ax };
+    default:
+      return { x: ax, y: -ay };
+  }
+}
+
+function handleDeviceMotion(event: DeviceMotionEvent) {
+  if (!tiltGravityEnabled) return;
+  const accel = event.accelerationIncludingGravity;
+  if (!accel) return;
+  const ax = accel.x ?? 0;
+  const ay = accel.y ?? 0;
+  const mapped = mapAccelerationToScreen(ax, ay);
+  normalizeGravityDirection(mapped.x, mapped.y);
+}
+
+async function enableTiltGravity() {
+  const motionEventCtor = window.DeviceMotionEvent as
+    | (typeof DeviceMotionEvent & {
+        requestPermission?: () => Promise<"granted" | "denied">;
+      })
+    | undefined;
+
+  if (!motionEventCtor) {
+    updateMotionToggleLabel("Tilt: N/A");
+    syncMotionGravityControl();
+    return;
+  }
+
+  tiltSupportKnown = true;
+  if (typeof motionEventCtor.requestPermission === "function") {
+    const permission = await motionEventCtor.requestPermission();
+    if (permission !== "granted") {
+      updateMotionToggleLabel("Tilt: Denied");
+      syncMotionGravityControl();
+      return;
+    }
+  }
+
+  window.addEventListener("devicemotion", handleDeviceMotion);
+  tiltGravityEnabled = true;
+  updateMotionToggleLabel();
+  syncMotionGravityControl();
+}
+
+function disableTiltGravity() {
+  tiltGravityEnabled = false;
+  gravityDirX = 0;
+  gravityDirY = 1;
+  window.removeEventListener("devicemotion", handleDeviceMotion);
+  updateMotionToggleLabel();
+  syncMotionGravityControl();
+}
+
+async function toggleTiltGravity() {
+  if (tiltGravityEnabled) {
+    disableTiltGravity();
+    return;
+  }
+
+  try {
+    await enableTiltGravity();
+  } catch (error) {
+    console.error(error);
+    updateMotionToggleLabel("Tilt: Error");
+    syncMotionGravityControl();
+  }
+}
+
+function detectTiltSupport() {
+  tiltSupportKnown = typeof window.DeviceMotionEvent !== "undefined";
+  updateMotionToggleLabel();
+  syncMotionGravityControl();
+}
 
 function updateCanvasLayout() {
   controls.classList.toggle("hidden", !showDebugPanel);
@@ -63,6 +195,8 @@ function updateCanvasLayout() {
 }
 
 updateCanvasLayout();
+detectTiltSupport();
+updateFullscreenLabel();
 
 let pointerDown = false;
 let pointerTargetX = canvasWidth * 0.5;
@@ -145,8 +279,31 @@ debugToggle.addEventListener("click", () => {
   sim.resize(canvasWidth, canvasHeight);
   resizeDensityBuffer();
   updateWordGlyphs();
-  resizeTimeline();
+  if (showDebugPanel) resizeTimeline();
 });
+
+fullscreenToggle.addEventListener("click", async () => {
+  try {
+    if (document.fullscreenElement) await document.exitFullscreen();
+    else await document.documentElement.requestFullscreen();
+  } catch (error) {
+    console.error(error);
+  }
+});
+
+motionToggle.addEventListener("click", () => {
+  void toggleTiltGravity();
+});
+
+const motionGravityInput = document.getElementById(
+  "motionGravity",
+) as HTMLInputElement;
+motionGravityInput.addEventListener("input", () => {
+  if (motionGravityInput.checked === tiltGravityEnabled) return;
+  void toggleTiltGravity();
+});
+
+document.addEventListener("fullscreenchange", updateFullscreenLabel);
 
 bindToggle("niceRender", "niceRenderVal", (v) => (niceRender = v), {
   on: "nice",
@@ -220,7 +377,7 @@ bindSlider(
   2,
 );
 bindSlider("frictionGlyph", "frictionGlyphVal", (v) => (frictionGlyph = v), 2);
-bindSlider("gravity", "gravityVal", (v) => (gravity = v), 3);
+bindSlider("gravity", "gravityVal", (v) => (gravityStrength = v), 3);
 bindSlider("substeps", "substepsVal", (v) => (substeps = v), 0);
 
 const params: SimParams = {
@@ -239,7 +396,8 @@ const params: SimParams = {
   overlapForceMax: overlapForceMax,
   frictionLiquid: frictionLiquid,
   frictionGlyph: frictionGlyph,
-  gravity: gravity,
+  gravityX: 0,
+  gravityY: gravityStrength,
   cursorX: pointerX,
   cursorY: pointerY,
   cursorVelX: pointerVelX,
@@ -250,6 +408,7 @@ const params: SimParams = {
   targetNeighbors: 6,
   substeps: substeps,
   frameDtScale: 1,
+  debugDataEnabled: 0,
 };
 
 const sim = new GPUSimulation(gl, canvasWidth, canvasHeight);
@@ -807,9 +966,10 @@ const forceHistory: {
 function resizeTimeline() {
   timelineCanvas.width = timelineCanvas.clientWidth * dpr;
   timelineCanvas.height = timelineCanvas.clientHeight * dpr;
+  tCtx.setTransform(1, 0, 0, 1, 0, 0);
   tCtx.scale(dpr, dpr);
 }
-resizeTimeline();
+if (showDebugPanel) resizeTimeline();
 
 function drawTimeline() {
   const w = timelineCanvas.clientWidth;
@@ -969,7 +1129,8 @@ function render() {
   params.overlapForceMax = overlapForceMax;
   params.frictionLiquid = frictionLiquid;
   params.frictionGlyph = frictionGlyph;
-  params.gravity = gravity;
+  params.gravityX = gravityDirX * gravityStrength;
+  params.gravityY = gravityDirY * gravityStrength;
   params.cursorX = pointerX;
   params.cursorY = pointerY;
   params.cursorVelX = pointerVelX;
@@ -978,10 +1139,11 @@ function render() {
   params.cursorForce = cursorForce;
   params.substeps = substeps;
   params.frameDtScale = smoothedFrameDtScale;
+  params.debugDataEnabled = showDebugPanel || !niceRender ? 1 : 0;
 
   sim.step(params);
 
-  if (frameCount % 5 === 0) {
+  if (showDebugPanel && frameCount % 5 === 0) {
     const forces = sim.readForceAverages();
     const spacing = sim.readSpacingStats();
     const speed = sim.readVelocityStats();
@@ -990,12 +1152,14 @@ function render() {
     drawTimeline();
 
     if (frameCount % 60 === 0) {
+      const grid = sim.getGridDiagnostics();
       console.log(
         [
-          `params: stickiness=${stickiness.toFixed(2)} stiffness=${stiffness.toFixed(2)} range=${interactionRange.toFixed(2)} maxForce=${maxForce.toFixed(3)} overlapCap=${overlapForceMax.toFixed(2)} surfTen=${surfaceTension.toFixed(2)} frictionLL=${frictionLiquid.toFixed(2)} frictionLG=${frictionGlyph.toFixed(2)} gravity=${gravity.toFixed(3)}`,
+          `params: stickiness=${stickiness.toFixed(2)} stiffness=${stiffness.toFixed(2)} range=${interactionRange.toFixed(2)} maxForce=${maxForce.toFixed(3)} overlapCap=${overlapForceMax.toFixed(2)} surfTen=${surfaceTension.toFixed(2)} frictionLL=${frictionLiquid.toFixed(2)} frictionLG=${frictionGlyph.toFixed(2)} gravity=(${params.gravityX.toFixed(3)}, ${params.gravityY.toFixed(3)}) strength=${gravityStrength.toFixed(3)}`,
           `forces: total=${forces.total.toFixed(4)} attraction=${forces.attraction.toFixed(4)} repulsion=${forces.repulsion.toFixed(4)} surfaceTension=${forces.surfaceTension.toFixed(4)}`,
           `spacing: meanNN=${spacing.meanNearest.toFixed(3)} minNN=${spacing.minNearest.toFixed(3)}`,
           `speed: mean=${speed.meanSpeed.toFixed(4)} max=${speed.maxSpeed.toFixed(4)}`,
+          `grid: size=${grid.gridCellSize.toFixed(2)} cols=${grid.gridCols} rows=${grid.gridRows} particleOverflow=${grid.particleOverflowCount} glyphOverflow=${grid.glyphOverflowCount}`,
         ].join("\n"),
       );
     }
@@ -1020,5 +1184,5 @@ window.addEventListener("resize", () => {
   sim.resize(canvasWidth, canvasHeight);
   resizeDensityBuffer();
   updateWordGlyphs();
-  resizeTimeline();
+  if (showDebugPanel) resizeTimeline();
 });

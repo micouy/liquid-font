@@ -16,7 +16,8 @@ export interface SimParams {
   overlapForceMax: number;
   frictionLiquid: number;
   frictionGlyph: number;
-  gravity: number;
+  gravityX: number;
+  gravityY: number;
   cursorX: number;
   cursorY: number;
   cursorVelX: number;
@@ -27,6 +28,7 @@ export interface SimParams {
   targetNeighbors: number;
   substeps: number;
   frameDtScale: number;
+  debugDataEnabled: number;
 }
 
 export interface ForceAverages {
@@ -51,6 +53,10 @@ const MAX_PARTICLES = 4000;
 const MAX_GLYPHS = 4096;
 const NUM_PARTICLES = 4000; // 8192 is max
 const BOUNDARY_JITTER = 0.0002;
+const PARTICLE_BUCKET_SIZE = 48;
+const PARTICLE_BUCKET_TEXELS = Math.ceil(PARTICLE_BUCKET_SIZE / 4);
+const GLYPH_BUCKET_SIZE = 64;
+const GLYPH_BUCKET_TEXELS = Math.ceil(GLYPH_BUCKET_SIZE / 4);
 
 function createShader(
   gl: WebGLRenderingContext,
@@ -92,6 +98,15 @@ function createFloatTexture(
   width: number,
   data?: Float32Array,
 ): WebGLTexture {
+  return createFloatTexture2D(gl, width, 1, data);
+}
+
+function createFloatTexture2D(
+  gl: WebGL2RenderingContext,
+  width: number,
+  height: number,
+  data?: Float32Array,
+): WebGLTexture {
   const tex = gl.createTexture()!;
   gl.bindTexture(gl.TEXTURE_2D, tex);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
@@ -104,7 +119,7 @@ function createFloatTexture(
       0,
       gl.RGBA32F,
       width,
-      1,
+      height,
       0,
       gl.RGBA,
       gl.FLOAT,
@@ -116,7 +131,7 @@ function createFloatTexture(
       0,
       gl.RGBA32F,
       width,
-      1,
+      height,
       0,
       gl.RGBA,
       gl.FLOAT,
@@ -139,6 +154,10 @@ precision highp float;
 
 uniform sampler2D u_state;
 uniform sampler2D u_glyphs;
+uniform sampler2D u_particleGridMeta;
+uniform sampler2D u_particleGridIndices;
+uniform sampler2D u_glyphGridMeta;
+uniform sampler2D u_glyphGridIndices;
 uniform float u_numParticles;
 uniform float u_numGlyphs;
 uniform float u_stickiness;
@@ -155,7 +174,7 @@ uniform float u_maxForce;
 uniform float u_overlapForceMax;
 uniform float u_frictionLiquid;
 uniform float u_frictionGlyph;
-uniform float u_gravity;
+uniform vec2 u_gravity;
 uniform vec2 u_cursor;
 uniform vec2 u_cursorVelocity;
 uniform float u_cursorActive;
@@ -165,16 +184,163 @@ uniform vec2 u_canvasSize;
 uniform float u_targetNeighbors;
 uniform float u_tick;
 uniform float u_dt;
+uniform float u_gridCols;
+uniform float u_gridRows;
+uniform float u_gridCellSize;
+uniform vec2 u_particleGridMetaTexSize;
+uniform vec2 u_particleGridIndexTexSize;
+uniform vec2 u_glyphGridMetaTexSize;
+uniform vec2 u_glyphGridIndexTexSize;
 
 #define NUM_PARTICLES ${MAX_PARTICLES}
 #define NUM_GLYPHS ${MAX_GLYPHS}
 #define ADHESION_FORCE_SCALE 0.03
 #define SURFACE_TENSION_FORCE_SCALE 0.1
+#define PARTICLE_BUCKET_TEXELS ${PARTICLE_BUCKET_TEXELS}
+#define GLYPH_BUCKET_TEXELS ${GLYPH_BUCKET_TEXELS}
 
 ${PAIR_FORCE_GLSL}
 
 float hash(float n) {
   return fract(sin(n) * 43758.5453123);
+}
+
+vec4 readLinearTexel(sampler2D tex, vec2 texSize, float index) {
+  float x = mod(index, texSize.x);
+  float y = floor(index / texSize.x);
+  return texture2D(tex, vec2((x + 0.5) / texSize.x, (y + 0.5) / texSize.y));
+}
+
+float readCellCount(sampler2D tex, vec2 texSize, float cellIndex) {
+  return readLinearTexel(tex, texSize, cellIndex).x;
+}
+
+void accumulateParticleNeighbor(
+  float candidateIdx,
+  float idx,
+  vec2 pos,
+  float maxDistSq,
+  float smoothR,
+  float smoothRSq,
+  float bodyRadius,
+  float interactionRange,
+  float stickiness,
+  float stiffness,
+  float maxForce,
+  float overlapForceMax,
+  inout float fAttrX,
+  inout float fAttrY,
+  inout float fRepX,
+  inout float fRepY,
+  inout int fluidNeighbors,
+  inout vec2 fluidNormal,
+  inout vec2 liquidVelocitySum,
+  inout float liquidVelocityWeight
+) {
+  if (candidateIdx < 0.0 || candidateIdx == idx) return;
+
+  vec2 oUV = vec2((candidateIdx + 0.5) / (u_numParticles * 2.0), 0.5);
+  vec4 other = texture2D(u_state, oUV);
+  vec2 diff = other.rg - pos;
+  float distSq = dot(diff, diff);
+  bool withinForce = distSq < maxDistSq;
+  bool withinSmooth = distSq < smoothRSq;
+  if (!withinForce && !withinSmooth) return;
+
+  float safeDistSq = max(distSq, 0.0001);
+  float dist = sqrt(safeDistSq);
+  vec2 dir = diff / dist;
+
+  if (withinForce) {
+    vec2 pairForce = computePairForceComponents(
+      dist,
+      bodyRadius,
+      interactionRange,
+      stickiness,
+      stiffness,
+      maxForce,
+      overlapForceMax
+    );
+    fAttrX += dir.x * pairForce.x;
+    fAttrY += dir.y * pairForce.x;
+    fRepX -= dir.x * pairForce.y;
+    fRepY -= dir.y * pairForce.y;
+  }
+
+  if (withinSmooth) {
+    float proximity = 1.0 - clamp(dist / smoothR, 0.0, 1.0);
+    fluidNeighbors++;
+    fluidNormal -= dir;
+    liquidVelocitySum += other.ba * proximity;
+    liquidVelocityWeight += proximity;
+  }
+}
+
+void accumulateGlyphNeighbor(
+  float candidateIdx,
+  vec2 pos,
+  float smoothR,
+  float smoothRSq,
+  float bodyRadius,
+  float restDist,
+  float maxDistSq,
+  float surfaceness,
+  float stiffness,
+  float glyphRepulsion,
+  float overlapForceMax,
+  float adhesive,
+  float maxForce,
+  inout float fRepX,
+  inout float fRepY,
+  inout float fAdhX,
+  inout float fAdhY,
+  inout int staticNeighbors,
+  inout vec2 staticNormal,
+  inout float glyphVelocityWeight
+) {
+  if (candidateIdx < 0.0 || candidateIdx >= u_numGlyphs) return;
+
+  vec2 gUV = vec2((candidateIdx + 0.5) / float(NUM_GLYPHS), 0.5);
+  vec4 glyph = texture2D(u_glyphs, gUV);
+  vec2 diff = glyph.rg - pos;
+  float distSq = dot(diff, diff);
+  float glyphRestDist = restDist * 0.8;
+  float glyphRestDistSq = glyphRestDist * glyphRestDist;
+  bool withinRepulsion = distSq < glyphRestDistSq;
+  bool withinSmooth = distSq < smoothRSq && distSq > 0.01;
+  bool withinAdhesion =
+    surfaceness > 0.0 &&
+    distSq > bodyRadius * bodyRadius &&
+    distSq < maxDistSq;
+  if (!withinRepulsion && !withinSmooth && !withinAdhesion) return;
+
+  float safeDistSq = max(distSq, 0.0001);
+  float dist = sqrt(safeDistSq);
+  vec2 dir = diff / dist;
+
+  if (withinRepulsion) {
+    float overlap = (glyphRestDist - dist) / glyphRestDist;
+    float repulsion = min(
+      stiffness * glyphRepulsion * 0.04 * overlap,
+      overlapForceMax
+    );
+    fRepX -= dir.x * repulsion;
+    fRepY -= dir.y * repulsion;
+  }
+
+  if (withinSmooth) {
+    float proximity = 1.0 - clamp(dist / smoothR, 0.0, 1.0);
+    staticNeighbors++;
+    staticNormal -= dir;
+    glyphVelocityWeight += proximity;
+  }
+
+  if (withinAdhesion) {
+    float adh = adhesive * ADHESION_FORCE_SCALE / dist * surfaceness;
+    adh = min(adh, maxForce);
+    fAdhX += dir.x * adh;
+    fAdhY += dir.y * adh;
+  }
 }
 
 void main() {
@@ -193,7 +359,7 @@ void main() {
   vec2 vel = state.ba;
 
   float fx = 0.0;
-  float fy = u_gravity * 0.1;
+  float fy = u_gravity.y * 0.1;
 
   float fAttrX = 0.0; float fAttrY = 0.0;
   float fRepX = 0.0; float fRepY = 0.0;
@@ -212,93 +378,250 @@ void main() {
   vec2 liquidVelocitySum = vec2(0.0);
   float liquidVelocityWeight = 0.0;
   float glyphVelocityWeight = 0.0;
+  vec2 baseCell = floor(pos / max(u_gridCellSize, 1.0));
 
-  for (int i = 0; i < NUM_PARTICLES; i++) {
-    if (float(i) >= u_numParticles) continue;
-    if (float(i) == idx) continue;
-
-    vec2 oUV = vec2((float(i) + 0.5) / (u_numParticles * 2.0), 0.5);
-    vec4 other = texture2D(u_state, oUV);
-    vec2 diff = other.rg - pos;
-    float distSq = diff.x * diff.x + diff.y * diff.y;
-
-    if (distSq < maxDistSq) {
-      float safeDistSq = max(distSq, 0.0001);
-      float dist = sqrt(safeDistSq);
-      float nx = diff.x / dist;
-      float ny = diff.y / dist;
-
-      vec2 pairForce = computePairForceComponents(
-        dist,
-        u_bodyRadius,
-        u_interactionRange,
-        u_stickiness,
-        u_stiffness,
-        u_maxForce,
-        u_overlapForceMax
+  for (int oy = -1; oy <= 1; oy++) {
+    float cellY = baseCell.y + float(oy);
+    if (cellY < 0.0 || cellY >= u_gridRows) continue;
+    for (int ox = -1; ox <= 1; ox++) {
+      float cellX = baseCell.x + float(ox);
+      if (cellX < 0.0 || cellX >= u_gridCols) continue;
+      float cellIndex = cellY * u_gridCols + cellX;
+      float particleCount = readCellCount(
+        u_particleGridMeta,
+        u_particleGridMetaTexSize,
+        cellIndex
       );
-      fAttrX += nx * pairForce.x;
-      fAttrY += ny * pairForce.x;
-      fRepX -= nx * pairForce.y;
-      fRepY -= ny * pairForce.y;
-    }
-
-    if (distSq < smoothRSq) {
-      fluidNeighbors++;
-      float dist = sqrt(max(distSq, 0.0001));
-      float invDist = 1.0 / dist;
-      float proximity = 1.0 - clamp(dist / smoothR, 0.0, 1.0);
-      fluidNormal.x -= diff.x * invDist;
-      fluidNormal.y -= diff.y * invDist;
-      liquidVelocitySum += other.ba * proximity;
-      liquidVelocityWeight += proximity;
+      float cellBase = cellIndex * float(PARTICLE_BUCKET_TEXELS);
+      for (int slot = 0; slot < PARTICLE_BUCKET_TEXELS; slot++) {
+        float packedStart = float(slot) * 4.0;
+        if (packedStart >= particleCount) break;
+        vec4 cellEntries = readLinearTexel(
+          u_particleGridIndices,
+          u_particleGridIndexTexSize,
+          cellBase + float(slot)
+        );
+        if (packedStart < particleCount) {
+          accumulateParticleNeighbor(
+            cellEntries.x,
+            idx,
+            pos,
+            maxDistSq,
+            smoothR,
+            smoothRSq,
+            u_bodyRadius,
+            u_interactionRange,
+            u_stickiness,
+            u_stiffness,
+            u_maxForce,
+            u_overlapForceMax,
+            fAttrX,
+            fAttrY,
+            fRepX,
+            fRepY,
+            fluidNeighbors,
+            fluidNormal,
+            liquidVelocitySum,
+            liquidVelocityWeight
+          );
+        }
+        if (packedStart + 1.0 < particleCount) {
+          accumulateParticleNeighbor(
+            cellEntries.y,
+            idx,
+            pos,
+            maxDistSq,
+            smoothR,
+            smoothRSq,
+            u_bodyRadius,
+            u_interactionRange,
+            u_stickiness,
+            u_stiffness,
+            u_maxForce,
+            u_overlapForceMax,
+            fAttrX,
+            fAttrY,
+            fRepX,
+            fRepY,
+            fluidNeighbors,
+            fluidNormal,
+            liquidVelocitySum,
+            liquidVelocityWeight
+          );
+        }
+        if (packedStart + 2.0 < particleCount) {
+          accumulateParticleNeighbor(
+            cellEntries.z,
+            idx,
+            pos,
+            maxDistSq,
+            smoothR,
+            smoothRSq,
+            u_bodyRadius,
+            u_interactionRange,
+            u_stickiness,
+            u_stiffness,
+            u_maxForce,
+            u_overlapForceMax,
+            fAttrX,
+            fAttrY,
+            fRepX,
+            fRepY,
+            fluidNeighbors,
+            fluidNormal,
+            liquidVelocitySum,
+            liquidVelocityWeight
+          );
+        }
+        if (packedStart + 3.0 < particleCount) {
+          accumulateParticleNeighbor(
+            cellEntries.w,
+            idx,
+            pos,
+            maxDistSq,
+            smoothR,
+            smoothRSq,
+            u_bodyRadius,
+            u_interactionRange,
+            u_stickiness,
+            u_stiffness,
+            u_maxForce,
+            u_overlapForceMax,
+            fAttrX,
+            fAttrY,
+            fRepX,
+            fRepY,
+            fluidNeighbors,
+            fluidNormal,
+            liquidVelocitySum,
+            liquidVelocityWeight
+          );
+        }
+      }
     }
   }
 
   float surfaceness = max(0.0, 1.0 - float(fluidNeighbors) / u_targetNeighbors);
   int staticNeighbors = 0;
 
-  for (int j = 0; j < NUM_GLYPHS; j++) {
-    if (float(j) >= u_numGlyphs) continue;
-
-    vec2 gUV = vec2((float(j) + 0.5) / float(NUM_GLYPHS), 0.5);
-    vec4 glyph = texture2D(u_glyphs, gUV);
-    vec2 diff = glyph.rg - pos;
-    float distSq = diff.x * diff.x + diff.y * diff.y;
-
-    float glyphRestDist = restDist * 0.8;
-    if (distSq < glyphRestDist * glyphRestDist) {
-      float safeDistSq = max(distSq, 0.0001);
-      float dist = sqrt(safeDistSq);
-      float nx = diff.x / dist;
-      float ny = diff.y / dist;
-      float overlap = (glyphRestDist - dist) / glyphRestDist;
-      float glyphRepulsion = min(
-        u_stiffness * u_glyphRepulsion * 0.04 * overlap,
-        u_overlapForceMax
+  for (int oy = -1; oy <= 1; oy++) {
+    float cellY = baseCell.y + float(oy);
+    if (cellY < 0.0 || cellY >= u_gridRows) continue;
+    for (int ox = -1; ox <= 1; ox++) {
+      float cellX = baseCell.x + float(ox);
+      if (cellX < 0.0 || cellX >= u_gridCols) continue;
+      float cellIndex = cellY * u_gridCols + cellX;
+      float glyphCount = readCellCount(
+        u_glyphGridMeta,
+        u_glyphGridMetaTexSize,
+        cellIndex
       );
-      fRepX -= nx * glyphRepulsion;
-      fRepY -= ny * glyphRepulsion;
-    }
-
-    if (distSq < smoothRSq && distSq > 0.01) {
-      staticNeighbors++;
-      float dist = sqrt(distSq);
-      float invDist = 1.0 / dist;
-      float proximity = 1.0 - clamp(dist / smoothR, 0.0, 1.0);
-      staticNormal.x -= diff.x * invDist;
-      staticNormal.y -= diff.y * invDist;
-      glyphVelocityWeight += proximity;
-    }
-
-    if (surfaceness > 0.0 && distSq > u_bodyRadius * u_bodyRadius && distSq < maxDistSq) {
-      float dist = sqrt(distSq);
-      float nx = diff.x / dist;
-      float ny = diff.y / dist;
-      float adh = u_adhesive * ADHESION_FORCE_SCALE / dist * surfaceness;
-      adh = min(adh, u_maxForce);
-      fAdhX += nx * adh;
-      fAdhY += ny * adh;
+      float cellBase = cellIndex * float(GLYPH_BUCKET_TEXELS);
+      for (int slot = 0; slot < GLYPH_BUCKET_TEXELS; slot++) {
+        float packedStart = float(slot) * 4.0;
+        if (packedStart >= glyphCount) break;
+        vec4 cellEntries = readLinearTexel(
+          u_glyphGridIndices,
+          u_glyphGridIndexTexSize,
+          cellBase + float(slot)
+        );
+        if (packedStart < glyphCount) {
+          accumulateGlyphNeighbor(
+            cellEntries.x,
+            pos,
+            smoothR,
+            smoothRSq,
+            u_bodyRadius,
+            restDist,
+            maxDistSq,
+            surfaceness,
+            u_stiffness,
+            u_glyphRepulsion,
+            u_overlapForceMax,
+            u_adhesive,
+            u_maxForce,
+            fRepX,
+            fRepY,
+            fAdhX,
+            fAdhY,
+            staticNeighbors,
+            staticNormal,
+            glyphVelocityWeight
+          );
+        }
+        if (packedStart + 1.0 < glyphCount) {
+          accumulateGlyphNeighbor(
+            cellEntries.y,
+            pos,
+            smoothR,
+            smoothRSq,
+            u_bodyRadius,
+            restDist,
+            maxDistSq,
+            surfaceness,
+            u_stiffness,
+            u_glyphRepulsion,
+            u_overlapForceMax,
+            u_adhesive,
+            u_maxForce,
+            fRepX,
+            fRepY,
+            fAdhX,
+            fAdhY,
+            staticNeighbors,
+            staticNormal,
+            glyphVelocityWeight
+          );
+        }
+        if (packedStart + 2.0 < glyphCount) {
+          accumulateGlyphNeighbor(
+            cellEntries.z,
+            pos,
+            smoothR,
+            smoothRSq,
+            u_bodyRadius,
+            restDist,
+            maxDistSq,
+            surfaceness,
+            u_stiffness,
+            u_glyphRepulsion,
+            u_overlapForceMax,
+            u_adhesive,
+            u_maxForce,
+            fRepX,
+            fRepY,
+            fAdhX,
+            fAdhY,
+            staticNeighbors,
+            staticNormal,
+            glyphVelocityWeight
+          );
+        }
+        if (packedStart + 3.0 < glyphCount) {
+          accumulateGlyphNeighbor(
+            cellEntries.w,
+            pos,
+            smoothR,
+            smoothRSq,
+            u_bodyRadius,
+            restDist,
+            maxDistSq,
+            surfaceness,
+            u_stiffness,
+            u_glyphRepulsion,
+            u_overlapForceMax,
+            u_adhesive,
+            u_maxForce,
+            fRepX,
+            fRepY,
+            fAdhX,
+            fAdhY,
+            staticNeighbors,
+            staticNormal,
+            glyphVelocityWeight
+          );
+        }
+      }
     }
   }
 
@@ -448,6 +771,10 @@ export class GPUSimulation {
 
   glyphTexture: WebGLTexture;
   glyphData: Float32Array;
+  particleGridMetaTexture: WebGLTexture;
+  particleGridIndexTexture: WebGLTexture;
+  glyphGridMetaTexture: WebGLTexture;
+  glyphGridIndexTexture: WebGLTexture;
 
   simUniforms: Record<string, WebGLUniformLocation | null>;
   spacingUniforms: Record<string, WebGLUniformLocation | null>;
@@ -459,6 +786,27 @@ export class GPUSimulation {
   private forceReadBuffer: Float32Array;
   private spacingReadBuffer: Float32Array;
   private stateReadBuffer: Float32Array;
+  private particleGridMetaData: Float32Array = new Float32Array(4);
+  private particleGridIndexData: Float32Array = new Float32Array(4);
+  private glyphGridMetaData: Float32Array = new Float32Array(4);
+  private glyphGridIndexData: Float32Array = new Float32Array(4);
+  private particleCellCounts: Uint16Array = new Uint16Array(1);
+  private glyphCellCounts: Uint16Array = new Uint16Array(1);
+  private gridCols: number = 1;
+  private gridRows: number = 1;
+  private gridCellSize: number = 1;
+  private particleGridMetaWidth: number = 1;
+  private particleGridMetaHeight: number = 1;
+  private particleGridIndexWidth: number = 1;
+  private particleGridIndexHeight: number = 1;
+  private glyphGridMetaWidth: number = 1;
+  private glyphGridMetaHeight: number = 1;
+  private glyphGridIndexWidth: number = 1;
+  private glyphGridIndexHeight: number = 1;
+  private maxTextureSize: number;
+  private glyphGridDirty: boolean = true;
+  private particleGridOverflowCount: number = 0;
+  private glyphGridOverflowCount: number = 0;
 
   constructor(
     gl: WebGL2RenderingContext,
@@ -471,6 +819,7 @@ export class GPUSimulation {
 
     const ext = gl.getExtension("EXT_color_buffer_float");
     if (!ext) console.warn("EXT_color_buffer_float not supported");
+    this.maxTextureSize = gl.getParameter(gl.MAX_TEXTURE_SIZE);
 
     const vs = createShader(gl, gl.VERTEX_SHADER, VERT_SOURCE)!;
     const fs = createShader(gl, gl.FRAGMENT_SHADER, buildSimFragment())!;
@@ -486,6 +835,10 @@ export class GPUSimulation {
     const uniformNames = [
       "u_state",
       "u_glyphs",
+      "u_particleGridMeta",
+      "u_particleGridIndices",
+      "u_glyphGridMeta",
+      "u_glyphGridIndices",
       "u_numParticles",
       "u_numGlyphs",
       "u_stickiness",
@@ -512,6 +865,13 @@ export class GPUSimulation {
       "u_targetNeighbors",
       "u_tick",
       "u_dt",
+      "u_gridCols",
+      "u_gridRows",
+      "u_gridCellSize",
+      "u_particleGridMetaTexSize",
+      "u_particleGridIndexTexSize",
+      "u_glyphGridMetaTexSize",
+      "u_glyphGridIndexTexSize",
     ];
     for (const name of uniformNames) {
       this.simUniforms[name] = gl.getUniformLocation(this.simProgram, name);
@@ -583,26 +943,254 @@ export class GPUSimulation {
 
     this.glyphData = new Float32Array(MAX_GLYPHS * 4);
     this.glyphTexture = createFloatTexture(gl, MAX_GLYPHS, this.glyphData);
+    this.particleGridMetaTexture = createFloatTexture(
+      gl,
+      1,
+      new Float32Array(4),
+    );
+    this.particleGridIndexTexture = createFloatTexture(
+      gl,
+      1,
+      new Float32Array(4),
+    );
+    this.glyphGridMetaTexture = createFloatTexture(gl, 1, new Float32Array(4));
+    this.glyphGridIndexTexture = createFloatTexture(gl, 1, new Float32Array(4));
 
     this.forceReadBuffer = new Float32Array(this.numParticles * 4);
     this.spacingReadBuffer = new Float32Array(this.numParticles * 4);
     this.stateReadBuffer = new Float32Array(this.numParticles * 4);
   }
 
+  private getTextureSize(totalTexels: number) {
+    const width = Math.max(1, Math.min(this.maxTextureSize, totalTexels));
+    const height = Math.max(1, Math.ceil(totalTexels / width));
+    return { width, height };
+  }
+
+  private uploadFloatTexture2D(
+    texture: WebGLTexture,
+    width: number,
+    height: number,
+    data: Float32Array,
+  ) {
+    const gl = this.gl;
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texImage2D(
+      gl.TEXTURE_2D,
+      0,
+      gl.RGBA32F,
+      width,
+      height,
+      0,
+      gl.RGBA,
+      gl.FLOAT,
+      data,
+    );
+  }
+
+  private ensureSpatialGrid(cellSize: number) {
+    const nextCellSize = Math.max(1, cellSize);
+    const nextCols = Math.max(1, Math.ceil(this.canvasWidth / nextCellSize));
+    const nextRows = Math.max(1, Math.ceil(this.canvasHeight / nextCellSize));
+    const needsResize =
+      this.gridCols !== nextCols ||
+      this.gridRows !== nextRows ||
+      Math.abs(this.gridCellSize - nextCellSize) > 0.001;
+    if (!needsResize) return;
+
+    this.gridCellSize = nextCellSize;
+    this.gridCols = nextCols;
+    this.gridRows = nextRows;
+    const cellCount = this.gridCols * this.gridRows;
+
+    this.particleCellCounts = new Uint16Array(cellCount);
+    this.glyphCellCounts = new Uint16Array(cellCount);
+
+    const particleMetaSize = this.getTextureSize(cellCount);
+    this.particleGridMetaWidth = particleMetaSize.width;
+    this.particleGridMetaHeight = particleMetaSize.height;
+    this.particleGridMetaData = new Float32Array(
+      this.particleGridMetaWidth * this.particleGridMetaHeight * 4,
+    );
+
+    const particleIndexSize = this.getTextureSize(
+      cellCount * PARTICLE_BUCKET_TEXELS,
+    );
+    this.particleGridIndexWidth = particleIndexSize.width;
+    this.particleGridIndexHeight = particleIndexSize.height;
+    this.particleGridIndexData = new Float32Array(
+      this.particleGridIndexWidth * this.particleGridIndexHeight * 4,
+    );
+
+    const glyphMetaSize = this.getTextureSize(cellCount);
+    this.glyphGridMetaWidth = glyphMetaSize.width;
+    this.glyphGridMetaHeight = glyphMetaSize.height;
+    this.glyphGridMetaData = new Float32Array(
+      this.glyphGridMetaWidth * this.glyphGridMetaHeight * 4,
+    );
+
+    const glyphIndexSize = this.getTextureSize(cellCount * GLYPH_BUCKET_TEXELS);
+    this.glyphGridIndexWidth = glyphIndexSize.width;
+    this.glyphGridIndexHeight = glyphIndexSize.height;
+    this.glyphGridIndexData = new Float32Array(
+      this.glyphGridIndexWidth * this.glyphGridIndexHeight * 4,
+    );
+
+    this.uploadFloatTexture2D(
+      this.particleGridMetaTexture,
+      this.particleGridMetaWidth,
+      this.particleGridMetaHeight,
+      this.particleGridMetaData,
+    );
+    this.uploadFloatTexture2D(
+      this.particleGridIndexTexture,
+      this.particleGridIndexWidth,
+      this.particleGridIndexHeight,
+      this.particleGridIndexData,
+    );
+    this.uploadFloatTexture2D(
+      this.glyphGridMetaTexture,
+      this.glyphGridMetaWidth,
+      this.glyphGridMetaHeight,
+      this.glyphGridMetaData,
+    );
+    this.uploadFloatTexture2D(
+      this.glyphGridIndexTexture,
+      this.glyphGridIndexWidth,
+      this.glyphGridIndexHeight,
+      this.glyphGridIndexData,
+    );
+    this.glyphGridDirty = true;
+  }
+
+  private getCellIndex(x: number, y: number) {
+    const cellX = Math.max(
+      0,
+      Math.min(this.gridCols - 1, Math.floor(x / this.gridCellSize)),
+    );
+    const cellY = Math.max(
+      0,
+      Math.min(this.gridRows - 1, Math.floor(y / this.gridCellSize)),
+    );
+    return cellY * this.gridCols + cellX;
+  }
+
+  private rebuildParticleGrid() {
+    const gl = this.gl;
+    const readFB = this.currentRead === 0 ? this.fbA : this.fbB;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, readFB);
+    gl.readPixels(
+      0,
+      0,
+      this.numParticles,
+      1,
+      gl.RGBA,
+      gl.FLOAT,
+      this.stateReadBuffer,
+    );
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+    this.particleCellCounts.fill(0);
+    this.particleGridMetaData.fill(0);
+    this.particleGridIndexData.fill(-1);
+    this.particleGridOverflowCount = 0;
+
+    for (let i = 0; i < this.numParticles; i++) {
+      const x = this.stateReadBuffer[i * 4];
+      const y = this.stateReadBuffer[i * 4 + 1];
+      const cellIndex = this.getCellIndex(x, y);
+      const count = this.particleCellCounts[cellIndex];
+      if (count < PARTICLE_BUCKET_SIZE) {
+        this.particleGridIndexData[
+          cellIndex * PARTICLE_BUCKET_TEXELS * 4 + count
+        ] = i;
+        this.particleCellCounts[cellIndex] = count + 1;
+      } else {
+        this.particleGridOverflowCount++;
+      }
+    }
+
+    for (let i = 0; i < this.particleCellCounts.length; i++) {
+      this.particleGridMetaData[i * 4] = this.particleCellCounts[i];
+    }
+
+    this.uploadFloatTexture2D(
+      this.particleGridMetaTexture,
+      this.particleGridMetaWidth,
+      this.particleGridMetaHeight,
+      this.particleGridMetaData,
+    );
+    this.uploadFloatTexture2D(
+      this.particleGridIndexTexture,
+      this.particleGridIndexWidth,
+      this.particleGridIndexHeight,
+      this.particleGridIndexData,
+    );
+  }
+
+  private rebuildGlyphGrid() {
+    this.glyphCellCounts.fill(0);
+    this.glyphGridMetaData.fill(0);
+    this.glyphGridIndexData.fill(-1);
+    this.glyphGridOverflowCount = 0;
+
+    for (let i = 0; i < this.numGlyphs; i++) {
+      const x = this.glyphData[i * 4];
+      const y = this.glyphData[i * 4 + 1];
+      const cellIndex = this.getCellIndex(x, y);
+      const count = this.glyphCellCounts[cellIndex];
+      if (count < GLYPH_BUCKET_SIZE) {
+        this.glyphGridIndexData[cellIndex * GLYPH_BUCKET_TEXELS * 4 + count] =
+          i;
+        this.glyphCellCounts[cellIndex] = count + 1;
+      } else {
+        this.glyphGridOverflowCount++;
+      }
+    }
+
+    for (let i = 0; i < this.glyphCellCounts.length; i++) {
+      this.glyphGridMetaData[i * 4] = this.glyphCellCounts[i];
+    }
+
+    this.uploadFloatTexture2D(
+      this.glyphGridMetaTexture,
+      this.glyphGridMetaWidth,
+      this.glyphGridMetaHeight,
+      this.glyphGridMetaData,
+    );
+    this.uploadFloatTexture2D(
+      this.glyphGridIndexTexture,
+      this.glyphGridIndexWidth,
+      this.glyphGridIndexHeight,
+      this.glyphGridIndexData,
+    );
+    this.glyphGridDirty = false;
+  }
+
   step(params: SimParams) {
     const gl = this.gl;
     let readFromA = this.currentRead === 0;
     const textureWidth = this.numParticles * 2;
+    const outputWidth =
+      params.debugDataEnabled > 0.5 ? textureWidth : this.numParticles;
     const dt =
       (params.timeScale * params.frameDtScale) / Math.max(params.substeps, 1);
+    const cellSize = Math.max(
+      params.smoothingRadius,
+      params.interactionRange * params.bodyRadius,
+    );
+
+    this.ensureSpatialGrid(cellSize);
+    if (this.glyphGridDirty) this.rebuildGlyphGrid();
 
     for (let s = 0; s < params.substeps; s++) {
+      this.rebuildParticleGrid();
       this.tick += 1;
       const readTex = readFromA ? this.stateA : this.stateB;
       const writeFB = readFromA ? this.fbB : this.fbA;
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, writeFB);
-      gl.viewport(0, 0, textureWidth, 1);
+      gl.viewport(0, 0, outputWidth, 1);
       gl.clearColor(0, 0, 0, 0);
       gl.clear(gl.COLOR_BUFFER_BIT);
 
@@ -615,6 +1203,22 @@ export class GPUSimulation {
       gl.activeTexture(gl.TEXTURE1);
       gl.bindTexture(gl.TEXTURE_2D, this.glyphTexture);
       gl.uniform1i(this.simUniforms["u_glyphs"], 1);
+
+      gl.activeTexture(gl.TEXTURE2);
+      gl.bindTexture(gl.TEXTURE_2D, this.particleGridMetaTexture);
+      gl.uniform1i(this.simUniforms["u_particleGridMeta"], 2);
+
+      gl.activeTexture(gl.TEXTURE3);
+      gl.bindTexture(gl.TEXTURE_2D, this.particleGridIndexTexture);
+      gl.uniform1i(this.simUniforms["u_particleGridIndices"], 3);
+
+      gl.activeTexture(gl.TEXTURE4);
+      gl.bindTexture(gl.TEXTURE_2D, this.glyphGridMetaTexture);
+      gl.uniform1i(this.simUniforms["u_glyphGridMeta"], 4);
+
+      gl.activeTexture(gl.TEXTURE5);
+      gl.bindTexture(gl.TEXTURE_2D, this.glyphGridIndexTexture);
+      gl.uniform1i(this.simUniforms["u_glyphGridIndices"], 5);
 
       gl.uniform1f(this.simUniforms["u_numParticles"], this.numParticles);
       gl.uniform1f(this.simUniforms["u_numGlyphs"], this.numGlyphs);
@@ -647,7 +1251,11 @@ export class GPUSimulation {
       );
       gl.uniform1f(this.simUniforms["u_frictionLiquid"], params.frictionLiquid);
       gl.uniform1f(this.simUniforms["u_frictionGlyph"], params.frictionGlyph);
-      gl.uniform1f(this.simUniforms["u_gravity"], params.gravity);
+      gl.uniform2f(
+        this.simUniforms["u_gravity"],
+        params.gravityX,
+        params.gravityY,
+      );
       gl.uniform2f(
         this.simUniforms["u_cursor"],
         params.cursorX,
@@ -672,6 +1280,29 @@ export class GPUSimulation {
       );
       gl.uniform1f(this.simUniforms["u_tick"], this.tick);
       gl.uniform1f(this.simUniforms["u_dt"], dt);
+      gl.uniform1f(this.simUniforms["u_gridCols"], this.gridCols);
+      gl.uniform1f(this.simUniforms["u_gridRows"], this.gridRows);
+      gl.uniform1f(this.simUniforms["u_gridCellSize"], this.gridCellSize);
+      gl.uniform2f(
+        this.simUniforms["u_particleGridMetaTexSize"],
+        this.particleGridMetaWidth,
+        this.particleGridMetaHeight,
+      );
+      gl.uniform2f(
+        this.simUniforms["u_particleGridIndexTexSize"],
+        this.particleGridIndexWidth,
+        this.particleGridIndexHeight,
+      );
+      gl.uniform2f(
+        this.simUniforms["u_glyphGridMetaTexSize"],
+        this.glyphGridMetaWidth,
+        this.glyphGridMetaHeight,
+      );
+      gl.uniform2f(
+        this.simUniforms["u_glyphGridIndexTexSize"],
+        this.glyphGridIndexWidth,
+        this.glyphGridIndexHeight,
+      );
 
       const posLoc = gl.getAttribLocation(this.simProgram, "a_position");
       gl.bindBuffer(gl.ARRAY_BUFFER, this.simQuadBuffer);
@@ -850,6 +1481,7 @@ export class GPUSimulation {
       gl.FLOAT,
       this.glyphData,
     );
+    this.glyphGridDirty = true;
   }
 
   getCurrentStateTexture(): WebGLTexture {
@@ -859,6 +1491,17 @@ export class GPUSimulation {
   resize(canvasWidth: number, canvasHeight: number) {
     this.canvasWidth = canvasWidth;
     this.canvasHeight = canvasHeight;
+    this.glyphGridDirty = true;
+  }
+
+  getGridDiagnostics() {
+    return {
+      particleOverflowCount: this.particleGridOverflowCount,
+      glyphOverflowCount: this.glyphGridOverflowCount,
+      gridCols: this.gridCols,
+      gridRows: this.gridRows,
+      gridCellSize: this.gridCellSize,
+    };
   }
 
   resetParticles(canvasWidth: number, canvasHeight: number) {
@@ -897,5 +1540,6 @@ export class GPUSimulation {
       gl.FLOAT,
       initData.slice(),
     );
+    this.glyphGridDirty = true;
   }
 }
