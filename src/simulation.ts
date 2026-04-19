@@ -8,12 +8,14 @@ export interface SimParams {
   glyphNormalWeight: number;
   adhesive: number;
   glyphRepulsion: number;
+  timeScale: number;
   smoothingRadius: number;
   interactionRange: number;
   bodyRadius: number;
   maxForce: number;
   overlapForceMax: number;
-  frictionAir: number;
+  frictionLiquid: number;
+  frictionGlyph: number;
   gravity: number;
   cursorX: number;
   cursorY: number;
@@ -150,7 +152,8 @@ uniform float u_interactionRange;
 uniform float u_bodyRadius;
 uniform float u_maxForce;
 uniform float u_overlapForceMax;
-uniform float u_frictionAir;
+uniform float u_frictionLiquid;
+uniform float u_frictionGlyph;
 uniform float u_gravity;
 uniform vec2 u_cursor;
 uniform vec2 u_cursorVelocity;
@@ -160,6 +163,7 @@ uniform float u_cursorRadius;
 uniform vec2 u_canvasSize;
 uniform float u_targetNeighbors;
 uniform float u_tick;
+uniform float u_dt;
 
 #define NUM_PARTICLES ${MAX_PARTICLES}
 #define NUM_GLYPHS ${MAX_GLYPHS}
@@ -204,6 +208,9 @@ void main() {
   int fluidNeighbors = 0;
   vec2 fluidNormal = vec2(0.0);
   vec2 staticNormal = vec2(0.0);
+  vec2 liquidVelocitySum = vec2(0.0);
+  float liquidVelocityWeight = 0.0;
+  float glyphVelocityWeight = 0.0;
 
   for (int i = 0; i < NUM_PARTICLES; i++) {
     if (float(i) >= u_numParticles) continue;
@@ -237,9 +244,13 @@ void main() {
 
     if (distSq < smoothRSq) {
       fluidNeighbors++;
-      float invDist = 1.0 / sqrt(distSq);
+      float dist = sqrt(max(distSq, 0.0001));
+      float invDist = 1.0 / dist;
+      float proximity = 1.0 - clamp(dist / smoothR, 0.0, 1.0);
       fluidNormal.x -= diff.x * invDist;
       fluidNormal.y -= diff.y * invDist;
+      liquidVelocitySum += other.ba * proximity;
+      liquidVelocityWeight += proximity;
     }
   }
 
@@ -271,9 +282,12 @@ void main() {
 
     if (distSq < smoothRSq && distSq > 0.01) {
       staticNeighbors++;
-      float invDist = 1.0 / sqrt(distSq);
+      float dist = sqrt(distSq);
+      float invDist = 1.0 / dist;
+      float proximity = 1.0 - clamp(dist / smoothR, 0.0, 1.0);
       staticNormal.x -= diff.x * invDist;
       staticNormal.y -= diff.y * invDist;
+      glyphVelocityWeight += proximity;
     }
 
     if (surfaceness > 0.0 && distSq > u_bodyRadius * u_bodyRadius && distSq < maxDistSq) {
@@ -306,6 +320,17 @@ void main() {
   fx += fAttrX + fRepX + fStX + fAdhX;
   fy += fAttrY + fRepY + fStY + fAdhY;
 
+  if (liquidVelocityWeight > 0.0) {
+    vec2 targetVelocity = liquidVelocitySum / liquidVelocityWeight;
+    float liquidBlend = min(u_frictionLiquid * liquidVelocityWeight * u_dt, 1.0);
+    vel += (targetVelocity - vel) * liquidBlend;
+  }
+
+  if (glyphVelocityWeight > 0.0) {
+    float glyphBlend = min(u_frictionGlyph * glyphVelocityWeight * u_dt, 1.0);
+    vel *= (1.0 - glyphBlend);
+  }
+
   if (u_cursorActive > 0.001) {
     vec2 cursorDiff = u_cursor - pos;
     float cursorDist = length(cursorDiff);
@@ -322,7 +347,7 @@ void main() {
       float carryFalloff = 1.0 - smoothstep(u_cursorRadius, u_cursorRadius * 1.6, cursorDist);
       if (cursorSpeed > 0.05 && carryFalloff > 0.0) {
         vec2 cursorVelDelta = u_cursorVelocity - vel;
-        float velocityBlend = u_cursorActive * carryFalloff * carryFalloff * 0.08;
+        float velocityBlend = u_cursorActive * carryFalloff * carryFalloff * 0.08 * u_dt;
         vel += cursorVelDelta * velocityBlend;
 
         float particleSpeed = length(vel);
@@ -354,12 +379,10 @@ void main() {
     return;
   }
 
-  vel.x += fx;
-  vel.y += fy;
-  vel.x *= (1.0 - u_frictionAir);
-  vel.y *= (1.0 - u_frictionAir);
+  vel.x += fx * u_dt;
+  vel.y += fy * u_dt;
 
-  vec2 newPos = pos + vel;
+  vec2 newPos = pos + vel * u_dt;
 
   float br = u_bodyRadius;
   if (newPos.x < br) { newPos.x = br; vel.x *= -0.3; }
@@ -476,7 +499,8 @@ export class GPUSimulation {
       "u_bodyRadius",
       "u_maxForce",
       "u_overlapForceMax",
-      "u_frictionAir",
+      "u_frictionLiquid",
+      "u_frictionGlyph",
       "u_gravity",
       "u_cursor",
       "u_cursorVelocity",
@@ -486,6 +510,7 @@ export class GPUSimulation {
       "u_canvasSize",
       "u_targetNeighbors",
       "u_tick",
+      "u_dt",
     ];
     for (const name of uniformNames) {
       this.simUniforms[name] = gl.getUniformLocation(this.simProgram, name);
@@ -567,6 +592,7 @@ export class GPUSimulation {
     const gl = this.gl;
     let readFromA = this.currentRead === 0;
     const textureWidth = this.numParticles * 2;
+    const dt = params.timeScale / Math.max(params.substeps, 1);
 
     for (let s = 0; s < params.substeps; s++) {
       this.tick += 1;
@@ -617,7 +643,8 @@ export class GPUSimulation {
         this.simUniforms["u_overlapForceMax"],
         params.overlapForceMax,
       );
-      gl.uniform1f(this.simUniforms["u_frictionAir"], params.frictionAir);
+      gl.uniform1f(this.simUniforms["u_frictionLiquid"], params.frictionLiquid);
+      gl.uniform1f(this.simUniforms["u_frictionGlyph"], params.frictionGlyph);
       gl.uniform1f(this.simUniforms["u_gravity"], params.gravity);
       gl.uniform2f(
         this.simUniforms["u_cursor"],
@@ -642,6 +669,7 @@ export class GPUSimulation {
         params.targetNeighbors,
       );
       gl.uniform1f(this.simUniforms["u_tick"], this.tick);
+      gl.uniform1f(this.simUniforms["u_dt"], dt);
 
       const posLoc = gl.getAttribLocation(this.simProgram, "a_position");
       gl.bindBuffer(gl.ARRAY_BUFFER, this.simQuadBuffer);

@@ -30,6 +30,12 @@
         font-family: monospace;
         font-size: 12px;
         display: flex;
+        gap: 24px;
+        align-items: flex-start;
+        overflow-x: auto;
+      }
+      .control-column {
+        display: flex;
         flex-direction: column;
         gap: 6px;
       }
@@ -60,149 +66,271 @@
   </head>
   <body>
     <div id="controls">
-      <label
-        ><span>liquid attract:</span
-        ><input
-          type="range"
-          id="stickiness"
-          min="0"
-          max="60"
-          step="1"
-          value="0"
-        /><span class="val" id="stickinessVal">0</span></label
-      >
-      <label
-        ><span>liquid repel:</span
-        ><input
-          type="range"
-          id="stiffness"
-          min="0"
-          max="120"
-          step="1"
-          value="20"
-        /><span class="val" id="stiffnessVal">20</span></label
-      >
-      <label
-        ><span>surface tension strength:</span
-        ><input
-          type="range"
-          id="surfaceTension"
-          min="0"
-          max="200"
-          step="1"
-          value="20"
-        /><span class="val" id="surfaceTensionVal">20</span></label
-      >
-      <label
-        ><span>liquid normal weight:</span
-        ><input
-          type="range"
-          id="liquidNormalWeight"
-          min="0"
-          max="4"
-          step="0.1"
-          value="1.0"
-        /><span class="val" id="liquidNormalWeightVal">1.0</span></label
-      >
-      <label
-        ><span>glyph normal weight:</span
-        ><input
-          type="range"
-          id="glyphNormalWeight"
-          min="0"
-          max="4"
-          step="0.1"
-          value="2.0"
-        /><span class="val" id="glyphNormalWeightVal">2.0</span></label
-      >
-      <label
-        ><span>glyph adhesion:</span
-        ><input
-          type="range"
-          id="adhesive"
-          min="0"
-          max="480"
-          step="1"
-          value="12"
-        /><span class="val" id="adhesiveVal">12</span></label
-      >
-      <label
-        ><span>glyph repulsion:</span
-        ><input
-          type="range"
-          id="glyphRepulsion"
-          min="0"
-          max="8"
-          step="0.1"
-          value="2.0"
-        /><span class="val" id="glyphRepulsionVal">2.0</span></label
-      >
-      <label
-        ><span>gravity:</span
-        ><input
-          type="range"
-          id="gravity"
-          min="0"
-          max="0.2"
-          step="0.005"
-          value="0.2"
-        /><span class="val" id="gravityVal">0.200</span></label
-      >
-      <label
-        ><span>cursor force:</span
-        ><input
-          type="range"
-          id="cursorForce"
-          min="0"
-          max="4"
-          step="0.05"
-          value="0.75"
-        /><span class="val" id="cursorForceVal">0.75</span></label
-      >
-      <label
-        ><span>interaction range:</span
-        ><input
-          type="range"
-          id="interactionRange"
-          min="2"
-          max="10"
-          step="0.5"
-          value="2.5"
-        /><span class="val" id="interactionRangeVal">2.5</span></label
-      >
-      <label
-        ><span>attract cap:</span
-        ><input
-          type="range"
-          id="maxForce"
-          min="0"
-          max="0.2"
-          step="0.001"
-          value="0.05"
-        /><span class="val" id="maxForceVal">0.050</span></label
-      >
-      <label
-        ><span>repel cap:</span
-        ><input
-          type="range"
-          id="overlapForceMax"
-          min="0"
-          max="2"
-          step="0.01"
-          value="1"
-        /><span class="val" id="overlapForceMaxVal">1.00</span></label
-      >
-      <label
-        ><span>frictionAir:</span
-        ><input
-          type="range"
-          id="frictionAir"
-          min="0"
-          max="0.01"
-          step="0.001"
-          value="0.005"
-        /><span class="val" id="frictionAirVal">0.005</span></label
-      >
+      <div class="control-column">
+        <label
+          ><span>render mode:</span
+          ><input type="checkbox" id="niceRender" checked /><span
+            class="val"
+            id="niceRenderVal"
+            >nice</span
+          ></label
+        >
+        <label
+          ><span>liquid attract:</span
+          ><input
+            type="range"
+            id="stickiness"
+            min="0"
+            max="60"
+            step="1"
+            value="0"
+          /><span class="val" id="stickinessVal">0</span></label
+        >
+        <label
+          ><span>liquid repel:</span
+          ><input
+            type="range"
+            id="stiffness"
+            min="0"
+            max="120"
+            step="1"
+            value="20"
+          /><span class="val" id="stiffnessVal">20</span></label
+        >
+        <label
+          ><span>surface tension strength:</span
+          ><input
+            type="range"
+            id="surfaceTension"
+            min="0"
+            max="200"
+            step="1"
+            value="20"
+          /><span class="val" id="surfaceTensionVal">20</span></label
+        >
+        <label
+          ><span>liquid normal weight:</span
+          ><input
+            type="range"
+            id="liquidNormalWeight"
+            min="0"
+            max="4"
+            step="0.1"
+            value="1.0"
+          /><span class="val" id="liquidNormalWeightVal">1.0</span></label
+        >
+        <label
+          ><span>glyph normal weight:</span
+          ><input
+            type="range"
+            id="glyphNormalWeight"
+            min="0"
+            max="4"
+            step="0.1"
+            value="2.0"
+          /><span class="val" id="glyphNormalWeightVal">2.0</span></label
+        >
+        <label
+          ><span>glyph adhesion:</span
+          ><input
+            type="range"
+            id="adhesive"
+            min="0"
+            max="480"
+            step="1"
+            value="12"
+          /><span class="val" id="adhesiveVal">12</span></label
+        >
+        <label
+          ><span>glyph repulsion:</span
+          ><input
+            type="range"
+            id="glyphRepulsion"
+            min="0"
+            max="8"
+            step="0.1"
+            value="2.0"
+          /><span class="val" id="glyphRepulsionVal">2.0</span></label
+        >
+        <label
+          ><span>gravity:</span
+          ><input
+            type="range"
+            id="gravity"
+            min="0"
+            max="0.2"
+            step="0.005"
+            value="0.2"
+          /><span class="val" id="gravityVal">0.200</span></label
+        >
+        <label
+          ><span>cursor force:</span
+          ><input
+            type="range"
+            id="cursorForce"
+            min="0"
+            max="4"
+            step="0.05"
+            value="0.75"
+          /><span class="val" id="cursorForceVal">0.75</span></label
+        >
+        <label
+          ><span>time scale:</span
+          ><input
+            type="range"
+            id="timeScale"
+            min="0.25"
+            max="4"
+            step="0.05"
+            value="2.00"
+          /><span class="val" id="timeScaleVal">2.00</span></label
+        >
+        <label
+          ><span>interaction range:</span
+          ><input
+            type="range"
+            id="interactionRange"
+            min="2"
+            max="10"
+            step="0.5"
+            value="2.5"
+          /><span class="val" id="interactionRangeVal">2.5</span></label
+        >
+        <label
+          ><span>attract cap:</span
+          ><input
+            type="range"
+            id="maxForce"
+            min="0"
+            max="0.2"
+            step="0.001"
+            value="0.05"
+          /><span class="val" id="maxForceVal">0.050</span></label
+        >
+        <label
+          ><span>repel cap:</span
+          ><input
+            type="range"
+            id="overlapForceMax"
+            min="0"
+            max="2"
+            step="0.01"
+            value="1"
+          /><span class="val" id="overlapForceMaxVal">1.00</span></label
+        >
+        <label
+          ><span>friction liquid-liquid:</span
+          ><input
+            type="range"
+            id="frictionLiquid"
+            min="0"
+            max="1"
+            step="0.01"
+            value="0.12"
+          /><span class="val" id="frictionLiquidVal">0.12</span></label
+        >
+        <label
+          ><span>friction liquid-glyph:</span
+          ><input
+            type="range"
+            id="frictionGlyph"
+            min="0"
+            max="1"
+            step="0.01"
+            value="0.20"
+          /><span class="val" id="frictionGlyphVal">0.20</span></label
+        >
+        <label
+          ><span>substeps:</span
+          ><input
+            type="range"
+            id="substeps"
+            min="1"
+            max="12"
+            step="1"
+            value="3"
+          /><span class="val" id="substepsVal">3</span></label
+        >
+      </div>
+      <div class="control-column">
+        <label
+          ><span>nice density size:</span
+          ><input
+            type="range"
+            id="nicePointSize"
+            min="4"
+            max="40"
+            step="1"
+            value="18"
+          /><span class="val" id="nicePointSizeVal">18</span></label
+        >
+        <label
+          ><span>nice glyph thickness:</span
+          ><input
+            type="range"
+            id="niceGlyphPointSize"
+            min="1"
+            max="40"
+            step="1"
+            value="10"
+          /><span class="val" id="niceGlyphPointSizeVal">10</span></label
+        >
+        <label
+          ><span>nice body start:</span
+          ><input
+            type="range"
+            id="niceBodyLow"
+            min="0"
+            max="1"
+            step="0.01"
+            value="0.18"
+          /><span class="val" id="niceBodyLowVal">0.18</span></label
+        >
+        <label
+          ><span>nice body end:</span
+          ><input
+            type="range"
+            id="niceBodyHigh"
+            min="0"
+            max="1"
+            step="0.01"
+            value="0.34"
+          /><span class="val" id="niceBodyHighVal">0.34</span></label
+        >
+        <label
+          ><span>nice edge start:</span
+          ><input
+            type="range"
+            id="niceEdgeLow"
+            min="0"
+            max="1"
+            step="0.01"
+            value="0.08"
+          /><span class="val" id="niceEdgeLowVal">0.08</span></label
+        >
+        <label
+          ><span>nice edge end:</span
+          ><input
+            type="range"
+            id="niceEdgeHigh"
+            min="0"
+            max="1"
+            step="0.01"
+            value="0.24"
+          /><span class="val" id="niceEdgeHighVal">0.24</span></label
+        >
+        <label
+          ><span>min visible density:</span
+          ><input
+            type="range"
+            id="niceMinDensity"
+            min="0"
+            max="1"
+            step="0.01"
+            value="0.90"
+          /><span class="val" id="niceMinDensityVal">0.90</span></label
+        >
+      </div>
     </div>
     <canvas id="timeline"></canvas>
     <canvas id="canvas"></canvas>

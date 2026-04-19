@@ -31,13 +31,24 @@ let liquidNormalWeight = 1;
 let glyphNormalWeight = 2;
 let adhesive = 12;
 let glyphRepulsion = 2;
+let timeScale = 2;
 let smoothingRadius = bodyRadius * 3.5;
 let interactionRange = 2.5;
 let maxForce = 0.05;
 let overlapForceMax = 1;
-let frictionAir = 0.005;
+let frictionLiquid = 0.12;
+let frictionGlyph = 0.2;
 let gravity = 0.2;
 let cursorForce = 0.75;
+let niceRender = true;
+let substeps = 3;
+let nicePointSize = 18;
+let niceGlyphPointSize = 10;
+let niceBodyLow = 0.18;
+let niceBodyHigh = 0.34;
+let niceEdgeLow = 0.08;
+let niceEdgeHigh = 0.24;
+let niceMinDensity = 0.9;
 const cursorRadius = 10;
 
 let pointerDown = false;
@@ -96,6 +107,47 @@ function bindSlider(
   });
 }
 
+function bindToggle(
+  id: string,
+  valId: string,
+  setter: (checked: boolean) => void,
+  labels: { on: string; off: string },
+) {
+  const input = document.getElementById(id) as HTMLInputElement;
+  const valSpan = document.getElementById(valId)!;
+
+  const applyValue = () => {
+    setter(input.checked);
+    valSpan.textContent = input.checked ? labels.on : labels.off;
+  };
+
+  applyValue();
+  input.addEventListener("input", applyValue);
+}
+
+bindToggle("niceRender", "niceRenderVal", (v) => (niceRender = v), {
+  on: "nice",
+  off: "debug",
+});
+
+bindSlider("nicePointSize", "nicePointSizeVal", (v) => (nicePointSize = v), 0);
+bindSlider(
+  "niceGlyphPointSize",
+  "niceGlyphPointSizeVal",
+  (v) => (niceGlyphPointSize = v),
+  0,
+);
+bindSlider("niceBodyLow", "niceBodyLowVal", (v) => (niceBodyLow = v), 2);
+bindSlider("niceBodyHigh", "niceBodyHighVal", (v) => (niceBodyHigh = v), 2);
+bindSlider("niceEdgeLow", "niceEdgeLowVal", (v) => (niceEdgeLow = v), 2);
+bindSlider("niceEdgeHigh", "niceEdgeHighVal", (v) => (niceEdgeHigh = v), 2);
+bindSlider(
+  "niceMinDensity",
+  "niceMinDensityVal",
+  (v) => (niceMinDensity = v),
+  2,
+);
+
 bindSlider("stickiness", "stickinessVal", (v) => (stickiness = v), 0);
 bindSlider("stiffness", "stiffnessVal", (v) => (stiffness = v), 0);
 bindSlider(
@@ -124,6 +176,7 @@ bindSlider(
   1,
 );
 bindSlider("cursorForce", "cursorForceVal", (v) => (cursorForce = v), 2);
+bindSlider("timeScale", "timeScaleVal", (v) => (timeScale = v), 2);
 bindSlider(
   "interactionRange",
   "interactionRangeVal",
@@ -137,8 +190,15 @@ bindSlider(
   (v) => (overlapForceMax = v),
   2,
 );
-bindSlider("frictionAir", "frictionAirVal", (v) => (frictionAir = v), 3);
+bindSlider(
+  "frictionLiquid",
+  "frictionLiquidVal",
+  (v) => (frictionLiquid = v),
+  2,
+);
+bindSlider("frictionGlyph", "frictionGlyphVal", (v) => (frictionGlyph = v), 2);
 bindSlider("gravity", "gravityVal", (v) => (gravity = v), 3);
+bindSlider("substeps", "substepsVal", (v) => (substeps = v), 0);
 
 const params: SimParams = {
   stickiness: stickiness,
@@ -148,12 +208,14 @@ const params: SimParams = {
   glyphNormalWeight: glyphNormalWeight,
   adhesive: adhesive,
   glyphRepulsion: glyphRepulsion,
+  timeScale: timeScale,
   smoothingRadius: smoothingRadius,
   interactionRange: interactionRange,
   bodyRadius: bodyRadius,
   maxForce: maxForce,
   overlapForceMax: overlapForceMax,
-  frictionAir: frictionAir,
+  frictionLiquid: frictionLiquid,
+  frictionGlyph: frictionGlyph,
   gravity: gravity,
   cursorX: pointerX,
   cursorY: pointerY,
@@ -163,7 +225,7 @@ const params: SimParams = {
   cursorForce: cursorForce,
   cursorRadius: cursorRadius,
   targetNeighbors: 6,
-  substeps: 3,
+  substeps: substeps,
 };
 
 const sim = new GPUSimulation(gl, canvasWidth, canvasHeight);
@@ -316,6 +378,104 @@ void main() {
 }
 `;
 
+const densityPointVS = `#version 300 es
+precision highp float;
+uniform sampler2D u_state;
+uniform float u_numParticles;
+uniform float u_pointSize;
+uniform vec2 u_resolution;
+void main() {
+  float idx = float(gl_VertexID);
+  vec2 uv = vec2((idx + 0.5) / (u_numParticles * 2.0), 0.5);
+  vec4 state = texture(u_state, uv);
+  vec2 pos = state.rg;
+  gl_Position = vec4(
+    (pos.x / u_resolution.x) * 2.0 - 1.0,
+    (pos.y / u_resolution.y) * -2.0 + 1.0,
+    0.0,
+    1.0
+  );
+  gl_PointSize = u_pointSize;
+}
+`;
+
+const densityPointFS = `#version 300 es
+precision highp float;
+out vec4 fragColor;
+void main() {
+  vec2 coord = gl_PointCoord - vec2(0.5);
+  float dist = length(coord);
+  if (dist > 0.5) discard;
+  float density = smoothstep(0.5, 0.0, dist);
+  density *= density;
+  fragColor = vec4(density, density, density, 1.0);
+}
+`;
+
+const compositeVS = `#version 300 es
+precision highp float;
+const vec2 POSITIONS[6] = vec2[6](
+  vec2(-1.0, -1.0),
+  vec2(1.0, -1.0),
+  vec2(-1.0, 1.0),
+  vec2(-1.0, 1.0),
+  vec2(1.0, -1.0),
+  vec2(1.0, 1.0)
+);
+out vec2 v_uv;
+void main() {
+  vec2 pos = POSITIONS[gl_VertexID];
+  v_uv = pos * 0.5 + 0.5;
+  gl_Position = vec4(pos, 0.0, 1.0);
+}
+`;
+
+const blurFS = `#version 300 es
+precision highp float;
+uniform sampler2D u_source;
+uniform vec2 u_texelSize;
+uniform vec2 u_direction;
+in vec2 v_uv;
+out vec4 fragColor;
+void main() {
+  vec2 offset = u_texelSize * u_direction;
+  float density = texture(u_source, v_uv).r * 0.227027;
+  density += texture(u_source, v_uv + offset * 1.384615).r * 0.316216;
+  density += texture(u_source, v_uv - offset * 1.384615).r * 0.316216;
+  density += texture(u_source, v_uv + offset * 3.230769).r * 0.070270;
+  density += texture(u_source, v_uv - offset * 3.230769).r * 0.070270;
+  fragColor = vec4(density, density, density, 1.0);
+}
+`;
+
+const compositeFS = `#version 300 es
+precision highp float;
+uniform sampler2D u_density;
+uniform vec4 u_thresholds;
+uniform float u_minVisibleDensity;
+in vec2 v_uv;
+out vec4 fragColor;
+void main() {
+  float density = texture(u_density, v_uv).r;
+  if (density < u_minVisibleDensity) {
+    fragColor = vec4(0.93, 0.93, 0.93, 1.0);
+    return;
+  }
+  float edgeLow = min(u_thresholds.x, u_thresholds.y);
+  float edgeHigh = max(u_thresholds.x, u_thresholds.y + 0.001);
+  float bodyLow = min(u_thresholds.z, u_thresholds.w);
+  float bodyHigh = max(u_thresholds.z, u_thresholds.w + 0.001);
+  float body = smoothstep(bodyLow, bodyHigh, density);
+  float edge = smoothstep(edgeLow, edgeHigh, density) - body;
+  vec3 bg = vec3(0.93);
+  vec3 edgeColor = vec3(0.38, 0.56, 0.86);
+  vec3 liquidColor = vec3(0.10, 0.13, 0.18);
+  vec3 color = mix(bg, edgeColor, edge * 0.85);
+  color = mix(color, liquidColor, body);
+  fragColor = vec4(color, 1.0);
+}
+`;
+
 const glyphPointVS = `#version 300 es
 precision highp float;
 uniform sampler2D u_glyphPoints;
@@ -368,6 +528,231 @@ const pointUniforms = {
   u_resolution: gl.getUniformLocation(pointProgram, "u_resolution"),
 };
 const pointVAO = gl.createVertexArray()!;
+
+const densityPointProgram = gl.createProgram()!;
+gl.attachShader(
+  densityPointProgram,
+  mkShader(gl.VERTEX_SHADER, densityPointVS)!,
+);
+gl.attachShader(
+  densityPointProgram,
+  mkShader(gl.FRAGMENT_SHADER, densityPointFS)!,
+);
+gl.linkProgram(densityPointProgram);
+const densityPointUniforms = {
+  u_state: gl.getUniformLocation(densityPointProgram, "u_state"),
+  u_numParticles: gl.getUniformLocation(densityPointProgram, "u_numParticles"),
+  u_pointSize: gl.getUniformLocation(densityPointProgram, "u_pointSize"),
+  u_resolution: gl.getUniformLocation(densityPointProgram, "u_resolution"),
+};
+const densityPointVAO = gl.createVertexArray()!;
+
+const glyphDensityProgram = gl.createProgram()!;
+gl.attachShader(glyphDensityProgram, mkShader(gl.VERTEX_SHADER, glyphPointVS)!);
+gl.attachShader(
+  glyphDensityProgram,
+  mkShader(gl.FRAGMENT_SHADER, densityPointFS)!,
+);
+gl.linkProgram(glyphDensityProgram);
+const glyphDensityUniforms = {
+  u_glyphPoints: gl.getUniformLocation(glyphDensityProgram, "u_glyphPoints"),
+  u_numGlyphPoints: gl.getUniformLocation(
+    glyphDensityProgram,
+    "u_numGlyphPoints",
+  ),
+  u_resolution: gl.getUniformLocation(glyphDensityProgram, "u_resolution"),
+  u_pointSize: gl.getUniformLocation(glyphDensityProgram, "u_pointSize"),
+};
+const glyphDensityVAO = gl.createVertexArray()!;
+
+const blurProgram = gl.createProgram()!;
+gl.attachShader(blurProgram, mkShader(gl.VERTEX_SHADER, compositeVS)!);
+gl.attachShader(blurProgram, mkShader(gl.FRAGMENT_SHADER, blurFS)!);
+gl.linkProgram(blurProgram);
+const blurUniforms = {
+  u_source: gl.getUniformLocation(blurProgram, "u_source"),
+  u_texelSize: gl.getUniformLocation(blurProgram, "u_texelSize"),
+  u_direction: gl.getUniformLocation(blurProgram, "u_direction"),
+};
+const blurVAO = gl.createVertexArray()!;
+
+const compositeProgram = gl.createProgram()!;
+gl.attachShader(compositeProgram, mkShader(gl.VERTEX_SHADER, compositeVS)!);
+gl.attachShader(compositeProgram, mkShader(gl.FRAGMENT_SHADER, compositeFS)!);
+gl.linkProgram(compositeProgram);
+const compositeUniforms = {
+  u_density: gl.getUniformLocation(compositeProgram, "u_density"),
+  u_thresholds: gl.getUniformLocation(compositeProgram, "u_thresholds"),
+  u_minVisibleDensity: gl.getUniformLocation(
+    compositeProgram,
+    "u_minVisibleDensity",
+  ),
+};
+const compositeVAO = gl.createVertexArray()!;
+
+function createScreenTexture(width: number, height: number): WebGLTexture {
+  const tex = gl.createTexture()!;
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texImage2D(
+    gl.TEXTURE_2D,
+    0,
+    gl.RGBA,
+    Math.max(1, width),
+    Math.max(1, height),
+    0,
+    gl.RGBA,
+    gl.UNSIGNED_BYTE,
+    null,
+  );
+  return tex;
+}
+
+let densityTexture = createScreenTexture(canvas.width, canvas.height);
+let blurTexture = createScreenTexture(canvas.width, canvas.height);
+const densityFramebuffer = gl.createFramebuffer()!;
+const blurFramebuffer = gl.createFramebuffer()!;
+
+function resizeDensityBuffer() {
+  densityTexture = createScreenTexture(canvas.width, canvas.height);
+  blurTexture = createScreenTexture(canvas.width, canvas.height);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, densityFramebuffer);
+  gl.framebufferTexture2D(
+    gl.FRAMEBUFFER,
+    gl.COLOR_ATTACHMENT0,
+    gl.TEXTURE_2D,
+    densityTexture,
+    0,
+  );
+  gl.bindFramebuffer(gl.FRAMEBUFFER, blurFramebuffer);
+  gl.framebufferTexture2D(
+    gl.FRAMEBUFFER,
+    gl.COLOR_ATTACHMENT0,
+    gl.TEXTURE_2D,
+    blurTexture,
+    0,
+  );
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+}
+
+resizeDensityBuffer();
+
+function renderDebug(stateTex: WebGLTexture) {
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.clearColor(0.93, 0.93, 0.93, 1.0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.useProgram(pointProgram);
+
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, stateTex);
+  gl.uniform1i(pointUniforms["u_state"], 0);
+  gl.uniform1f(pointUniforms["u_numParticles"], sim.numParticles);
+  gl.uniform2f(pointUniforms["u_resolution"], canvasWidth, canvasHeight);
+  gl.uniform1f(pointUniforms["u_pointSize"], 4.0 * dpr);
+
+  gl.bindVertexArray(pointVAO);
+  gl.drawArrays(gl.POINTS, 0, sim.numParticles);
+
+  if (currentGlyphPoints.length > 0) {
+    gl.useProgram(glyphPointProgram);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, glyphPointTexture);
+    gl.uniform1i(glyphPointUniforms["u_glyphPoints"], 1);
+    gl.uniform1f(
+      glyphPointUniforms["u_numGlyphPoints"],
+      currentGlyphPointCount,
+    );
+    gl.uniform2f(glyphPointUniforms["u_resolution"], canvasWidth, canvasHeight);
+    gl.uniform1f(glyphPointUniforms["u_pointSize"], 4.0 * dpr);
+    gl.bindVertexArray(glyphPointVAO);
+    gl.drawArrays(gl.POINTS, 0, currentGlyphPointCount);
+  }
+}
+
+function renderNice(stateTex: WebGLTexture) {
+  gl.bindFramebuffer(gl.FRAMEBUFFER, densityFramebuffer);
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.clearColor(0.0, 0.0, 0.0, 1.0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.ONE, gl.ONE);
+
+  gl.useProgram(densityPointProgram);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, stateTex);
+  gl.uniform1i(densityPointUniforms["u_state"], 0);
+  gl.uniform1f(densityPointUniforms["u_numParticles"], sim.numParticles);
+  gl.uniform2f(densityPointUniforms["u_resolution"], canvasWidth, canvasHeight);
+  gl.uniform1f(densityPointUniforms["u_pointSize"], nicePointSize * dpr);
+  gl.bindVertexArray(densityPointVAO);
+  gl.drawArrays(gl.POINTS, 0, sim.numParticles);
+
+  if (currentGlyphPointCount > 0) {
+    gl.useProgram(glyphDensityProgram);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, glyphPointTexture);
+    gl.uniform1i(glyphDensityUniforms["u_glyphPoints"], 1);
+    gl.uniform1f(
+      glyphDensityUniforms["u_numGlyphPoints"],
+      currentGlyphPointCount,
+    );
+    gl.uniform2f(
+      glyphDensityUniforms["u_resolution"],
+      canvasWidth,
+      canvasHeight,
+    );
+    gl.uniform1f(glyphDensityUniforms["u_pointSize"], niceGlyphPointSize * dpr);
+    gl.bindVertexArray(glyphDensityVAO);
+    gl.drawArrays(gl.POINTS, 0, currentGlyphPointCount);
+  }
+
+  gl.disable(gl.BLEND);
+
+  gl.useProgram(blurProgram);
+  gl.bindVertexArray(blurVAO);
+  gl.uniform2f(
+    blurUniforms["u_texelSize"],
+    1 / canvas.width,
+    1 / canvas.height,
+  );
+
+  gl.bindFramebuffer(gl.FRAMEBUFFER, blurFramebuffer);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, densityTexture);
+  gl.uniform1i(blurUniforms["u_source"], 0);
+  gl.uniform2f(blurUniforms["u_direction"], 1.0, 0.0);
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+  gl.bindFramebuffer(gl.FRAMEBUFFER, densityFramebuffer);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, blurTexture);
+  gl.uniform1i(blurUniforms["u_source"], 0);
+  gl.uniform2f(blurUniforms["u_direction"], 0.0, 1.0);
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.clearColor(0.93, 0.93, 0.93, 1.0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.useProgram(compositeProgram);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, densityTexture);
+  gl.uniform1i(compositeUniforms["u_density"], 0);
+  gl.uniform4f(
+    compositeUniforms["u_thresholds"],
+    niceEdgeLow,
+    niceEdgeHigh,
+    niceBodyLow,
+    niceBodyHigh,
+  );
+  gl.uniform1f(compositeUniforms["u_minVisibleDensity"], niceMinDensity);
+  gl.bindVertexArray(compositeVAO);
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+}
 
 const glyphPointProgram = gl.createProgram()!;
 gl.attachShader(glyphPointProgram, mkShader(gl.VERTEX_SHADER, glyphPointVS)!);
@@ -542,11 +927,13 @@ function render() {
   params.glyphNormalWeight = glyphNormalWeight;
   params.adhesive = adhesive;
   params.glyphRepulsion = glyphRepulsion;
+  params.timeScale = timeScale;
   params.smoothingRadius = smoothingRadius;
   params.interactionRange = interactionRange;
   params.maxForce = maxForce;
   params.overlapForceMax = overlapForceMax;
-  params.frictionAir = frictionAir;
+  params.frictionLiquid = frictionLiquid;
+  params.frictionGlyph = frictionGlyph;
   params.gravity = gravity;
   params.cursorX = pointerX;
   params.cursorY = pointerY;
@@ -554,6 +941,7 @@ function render() {
   params.cursorVelY = pointerVelY;
   params.cursorActive = pointerActive;
   params.cursorForce = cursorForce;
+  params.substeps = substeps;
 
   sim.step(params);
 
@@ -568,7 +956,7 @@ function render() {
     if (frameCount % 60 === 0) {
       console.log(
         [
-          `params: stickiness=${stickiness.toFixed(2)} stiffness=${stiffness.toFixed(2)} range=${interactionRange.toFixed(2)} maxForce=${maxForce.toFixed(3)} overlapCap=${overlapForceMax.toFixed(2)} surfTen=${surfaceTension.toFixed(2)} frictionAir=${frictionAir.toFixed(3)} gravity=${gravity.toFixed(3)}`,
+          `params: stickiness=${stickiness.toFixed(2)} stiffness=${stiffness.toFixed(2)} range=${interactionRange.toFixed(2)} maxForce=${maxForce.toFixed(3)} overlapCap=${overlapForceMax.toFixed(2)} surfTen=${surfaceTension.toFixed(2)} frictionLL=${frictionLiquid.toFixed(2)} frictionLG=${frictionGlyph.toFixed(2)} gravity=${gravity.toFixed(3)}`,
           `forces: total=${forces.total.toFixed(4)} attraction=${forces.attraction.toFixed(4)} repulsion=${forces.repulsion.toFixed(4)} surfaceTension=${forces.surfaceTension.toFixed(4)}`,
           `spacing: meanNN=${spacing.meanNearest.toFixed(3)} minNN=${spacing.minNearest.toFixed(3)}`,
           `speed: mean=${speed.meanSpeed.toFixed(4)} max=${speed.maxSpeed.toFixed(4)}`,
@@ -579,36 +967,8 @@ function render() {
   frameCount++;
 
   const stateTex = sim.getCurrentStateTexture();
-  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-  gl.viewport(0, 0, canvas.width, canvas.height);
-  gl.clearColor(0.93, 0.93, 0.93, 1.0);
-  gl.clear(gl.COLOR_BUFFER_BIT);
-  gl.useProgram(pointProgram);
-
-  gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, stateTex);
-  gl.uniform1i(pointUniforms["u_state"], 0);
-  gl.uniform1f(pointUniforms["u_numParticles"], sim.numParticles);
-  gl.uniform2f(pointUniforms["u_resolution"], canvasWidth, canvasHeight);
-  gl.uniform1f(pointUniforms["u_pointSize"], 4.0 * dpr);
-
-  gl.bindVertexArray(pointVAO);
-  gl.drawArrays(gl.POINTS, 0, sim.numParticles);
-
-  if (currentGlyphPoints.length > 0) {
-    gl.useProgram(glyphPointProgram);
-    gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, glyphPointTexture);
-    gl.uniform1i(glyphPointUniforms["u_glyphPoints"], 1);
-    gl.uniform1f(
-      glyphPointUniforms["u_numGlyphPoints"],
-      currentGlyphPointCount,
-    );
-    gl.uniform2f(glyphPointUniforms["u_resolution"], canvasWidth, canvasHeight);
-    gl.uniform1f(glyphPointUniforms["u_pointSize"], 4.0 * dpr);
-    gl.bindVertexArray(glyphPointVAO);
-    gl.drawArrays(gl.POINTS, 0, currentGlyphPointCount);
-  }
+  if (niceRender) renderNice(stateTex);
+  else renderDebug(stateTex);
 
   requestAnimationFrame(render);
 }
@@ -630,6 +990,7 @@ window.addEventListener("resize", () => {
   pointerX = Math.min(pointerX, canvasWidth);
   pointerY = Math.min(pointerY, canvasHeight);
   sim.resize(canvasWidth, canvasHeight);
+  resizeDensityBuffer();
   updateWordGlyphs();
   resizeTimeline();
 });
