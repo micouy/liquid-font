@@ -27,7 +27,6 @@ export interface SimParams {
   cursorRadius: number;
   targetNeighbors: number;
   substeps: number;
-  frameDtScale: number;
   debugDataEnabled: number;
 }
 
@@ -55,7 +54,7 @@ const NUM_PARTICLES = 4000; // 8192 is max
 const BOUNDARY_JITTER = 0.0002;
 const PARTICLE_BUCKET_SIZE = 48;
 const PARTICLE_BUCKET_TEXELS = Math.ceil(PARTICLE_BUCKET_SIZE / 4);
-const GLYPH_BUCKET_SIZE = 64;
+const GLYPH_BUCKET_SIZE = 32;
 const GLYPH_BUCKET_TEXELS = Math.ceil(GLYPH_BUCKET_SIZE / 4);
 
 function createShader(
@@ -1173,8 +1172,7 @@ export class GPUSimulation {
     const textureWidth = this.numParticles * 2;
     const outputWidth =
       params.debugDataEnabled > 0.5 ? textureWidth : this.numParticles;
-    const dt =
-      (params.timeScale * params.frameDtScale) / Math.max(params.substeps, 1);
+    const dt = params.timeScale / Math.max(params.substeps, 1);
     const cellSize = Math.max(
       params.smoothingRadius,
       params.interactionRange * params.bodyRadius,

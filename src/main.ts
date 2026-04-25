@@ -43,6 +43,7 @@ let cursorForce = 2.5;
 let niceRender = true;
 let showDebugPanel = false;
 let substeps = 2;
+let frameCap = 0;
 let nicePointSize = 18;
 let niceGlyphPointSize = 10;
 let niceBodyLow = 0.18;
@@ -379,6 +380,7 @@ bindSlider(
 bindSlider("frictionGlyph", "frictionGlyphVal", (v) => (frictionGlyph = v), 2);
 bindSlider("gravity", "gravityVal", (v) => (gravityStrength = v), 3);
 bindSlider("substeps", "substepsVal", (v) => (substeps = v), 0);
+bindSlider("frameCap", "frameCapVal", (v) => (frameCap = v), 0);
 
 const params: SimParams = {
   stickiness: stickiness,
@@ -407,7 +409,6 @@ const params: SimParams = {
   cursorRadius: cursorRadius,
   targetNeighbors: 6,
   substeps: substeps,
-  frameDtScale: 1,
   debugDataEnabled: 0,
 };
 
@@ -1096,16 +1097,23 @@ function drawTimeline() {
 
 let frameCount = 0;
 let lastFrameTime = performance.now();
-let smoothedFrameDtScale = 1;
+let simFrameAccumulator = 0;
 
-function render() {
-  const now = performance.now();
+function render(now: number = performance.now()) {
+  if (frameCap > 0) {
+    const cappedFrameMs = 1000 / frameCap;
+    if (now - lastFrameTime < cappedFrameMs) {
+      requestAnimationFrame(render);
+      return;
+    }
+  }
+
   const frameDt = Math.max(now - lastFrameTime, 0.0001);
   fpsVal.textContent = (1000 / frameDt).toFixed(0);
-  const targetFrameMs = 1000 / 60;
-  const rawFrameDtScale = Math.min(Math.max(frameDt / targetFrameMs, 0.5), 2.5);
-  smoothedFrameDtScale += (rawFrameDtScale - smoothedFrameDtScale) * 0.15;
   lastFrameTime = now;
+  const targetFrameMs = 1000 / 60;
+  const frameUnits = Math.min(frameDt / targetFrameMs, 4);
+  simFrameAccumulator += frameUnits;
 
   prevPointerX = pointerX;
   prevPointerY = pointerY;
@@ -1138,10 +1146,15 @@ function render() {
   params.cursorActive = pointerActive;
   params.cursorForce = cursorForce;
   params.substeps = substeps;
-  params.frameDtScale = smoothedFrameDtScale;
   params.debugDataEnabled = showDebugPanel || !niceRender ? 1 : 0;
 
-  sim.step(params);
+  let simSteps = 0;
+  while (simFrameAccumulator >= 1 && simSteps < 4) {
+    sim.step(params);
+    simFrameAccumulator -= 1;
+    simSteps += 1;
+  }
+  if (simFrameAccumulator > 4) simFrameAccumulator = 4;
 
   if (showDebugPanel && frameCount % 5 === 0) {
     const forces = sim.readForceAverages();
