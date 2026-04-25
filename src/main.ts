@@ -8,6 +8,10 @@ gl.getExtension("EXT_color_buffer_float");
 
 const timelineCanvas = document.getElementById("timeline") as HTMLCanvasElement;
 const tCtx = timelineCanvas.getContext("2d")!;
+const gravityPlotCanvas = document.getElementById(
+  "gravityPlot",
+) as HTMLCanvasElement;
+const gPlotCtx = gravityPlotCanvas.getContext("2d")!;
 const controls = document.getElementById("controls")!;
 const debugToggle = document.getElementById("debugToggle") as HTMLButtonElement;
 const fullscreenToggle = document.getElementById(
@@ -39,6 +43,7 @@ let overlapForceMax = 1;
 let frictionLiquid = 0.02;
 let frictionGlyph = 0.03;
 let gravityStrength = 0.2;
+let gravityMultiplier = 0.2;
 let cursorForce = 2.5;
 let niceRender = true;
 let showDebugPanel = false;
@@ -53,10 +58,21 @@ let niceEdgeHigh = 0.24;
 let niceMinDensity = 0.9;
 const cursorRadius = 10;
 const fpsVal = document.getElementById("fpsVal")!;
-let gravityDirX = 0;
-let gravityDirY = 1;
+let deviceGravityX = 0;
+let deviceGravityY = 0;
 let tiltGravityEnabled = false;
 let tiltSupportKnown = false;
+const GRAVITY_PLOT_HISTORY_LEN = 60;
+const GRAVITY_PLOT_MAX = 12;
+const gravityPlotHistory: { x: number; y: number }[] = [];
+
+function isLikelyMobileDevice() {
+  const ua = navigator.userAgent;
+  const touchCapable = navigator.maxTouchPoints > 1;
+  const coarsePointer = window.matchMedia("(pointer: coarse)").matches;
+  const mobileUA = /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
+  return mobileUA || (touchCapable && coarsePointer);
+}
 
 function updateFullscreenLabel() {
   fullscreenToggle.textContent = document.fullscreenElement
@@ -88,13 +104,8 @@ function syncMotionGravityControl() {
       ? "on"
       : "off"
     : "n/a";
-}
-
-function normalizeGravityDirection(x: number, y: number) {
-  const len = Math.hypot(x, y);
-  if (len < 0.001) return;
-  gravityDirX = x / len;
-  gravityDirY = y / len;
+  gravityPlotCanvas.classList.toggle("hidden", !tiltGravityEnabled);
+  if (tiltGravityEnabled) resizeGravityPlot();
 }
 
 function mapAccelerationToScreen(ax: number, ay: number) {
@@ -118,7 +129,8 @@ function handleDeviceMotion(event: DeviceMotionEvent) {
   const ax = accel.x ?? 0;
   const ay = accel.y ?? 0;
   const mapped = mapAccelerationToScreen(ax, ay);
-  normalizeGravityDirection(mapped.x, mapped.y);
+  deviceGravityX = mapped.x;
+  deviceGravityY = mapped.y;
 }
 
 async function enableTiltGravity() {
@@ -150,10 +162,29 @@ async function enableTiltGravity() {
   syncMotionGravityControl();
 }
 
+async function autoEnableTiltGravity() {
+  const motionEventCtor = window.DeviceMotionEvent as
+    | (typeof DeviceMotionEvent & {
+        requestPermission?: () => Promise<"granted" | "denied">;
+      })
+    | undefined;
+
+  if (!motionEventCtor || !isLikelyMobileDevice()) return;
+  tiltSupportKnown = true;
+
+  try {
+    await enableTiltGravity();
+  } catch (error) {
+    console.error(error);
+    updateMotionToggleLabel("Tilt: Error");
+    syncMotionGravityControl();
+  }
+}
+
 function disableTiltGravity() {
   tiltGravityEnabled = false;
-  gravityDirX = 0;
-  gravityDirY = 1;
+  deviceGravityX = 0;
+  deviceGravityY = 0;
   window.removeEventListener("devicemotion", handleDeviceMotion);
   updateMotionToggleLabel();
   syncMotionGravityControl();
@@ -195,9 +226,18 @@ function updateCanvasLayout() {
   canvas.style.height = canvasHeight + "px";
 }
 
+function resizeGravityPlot() {
+  gravityPlotCanvas.width = gravityPlotCanvas.clientWidth * dpr;
+  gravityPlotCanvas.height = gravityPlotCanvas.clientHeight * dpr;
+  gPlotCtx.setTransform(1, 0, 0, 1, 0, 0);
+  gPlotCtx.scale(dpr, dpr);
+}
+
 updateCanvasLayout();
+resizeGravityPlot();
 detectTiltSupport();
 updateFullscreenLabel();
+void autoEnableTiltGravity();
 
 let pointerDown = false;
 let pointerTargetX = canvasWidth * 0.5;
@@ -379,6 +419,12 @@ bindSlider(
 );
 bindSlider("frictionGlyph", "frictionGlyphVal", (v) => (frictionGlyph = v), 2);
 bindSlider("gravity", "gravityVal", (v) => (gravityStrength = v), 3);
+bindSlider(
+  "gravityMultiplier",
+  "gravityMultiplierVal",
+  (v) => (gravityMultiplier = v),
+  1,
+);
 bindSlider("substeps", "substepsVal", (v) => (substeps = v), 0);
 bindSlider("frameCap", "frameCapVal", (v) => (frameCap = v), 0);
 
@@ -653,10 +699,8 @@ void main() {
   float body = smoothstep(bodyLow, bodyHigh, density);
   float edge = smoothstep(edgeLow, edgeHigh, density) - body;
   vec3 bg = vec3(0.93);
-  vec3 edgeColor = vec3(0.38, 0.56, 0.86);
-  vec3 liquidColor = vec3(0.10, 0.13, 0.18);
-  vec3 color = mix(bg, edgeColor, edge * 0.85);
-  color = mix(color, liquidColor, body);
+  float fill = clamp(max(body, edge), 0.0, 1.0);
+  vec3 color = mix(bg, vec3(0.0), fill);
   fragColor = vec4(color, 1.0);
 }
 `;
@@ -978,6 +1022,9 @@ function drawTimeline() {
   const forcePanelH = Math.floor(h * 0.6);
   const spacingPanelY = forcePanelH + 1;
   const spacingPanelH = h - spacingPanelY;
+  const visibleHistoryLen = Math.max(2, Math.ceil(FORCE_HISTORY_LEN / 2));
+  const historyStart = Math.max(0, forceHistory.length - visibleHistoryLen);
+  const plottedHistory = forceHistory.slice(historyStart);
 
   tCtx.clearRect(0, 0, w, h);
   tCtx.fillStyle = "#111";
@@ -988,12 +1035,12 @@ function drawTimeline() {
   tCtx.lineTo(w, forcePanelH + 0.5);
   tCtx.stroke();
 
-  if (forceHistory.length < 2) return;
+  if (plottedHistory.length < 2) return;
 
   let maxVal = 0.001;
   let maxSpacing = 0.001;
   const targetSpacing = bodyRadius * 2;
-  for (const f of forceHistory) {
+  for (const f of plottedHistory) {
     maxVal = Math.max(
       maxVal,
       f.total,
@@ -1016,11 +1063,11 @@ function drawTimeline() {
     tCtx.beginPath();
     tCtx.strokeStyle = line.color;
     tCtx.lineWidth = 1.5;
-    for (let i = 0; i < forceHistory.length; i++) {
-      const x = (i / FORCE_HISTORY_LEN) * w;
+    for (let i = 0; i < plottedHistory.length; i++) {
+      const x = (i / (plottedHistory.length - 1)) * w;
       const y =
         forcePanelH -
-        (forceHistory[i][line.key] / maxVal) * (forcePanelH - 4) -
+        (plottedHistory[i][line.key] / maxVal) * (forcePanelH - 4) -
         2;
       if (i === 0) tCtx.moveTo(x, y);
       else tCtx.lineTo(x, y);
@@ -1041,12 +1088,12 @@ function drawTimeline() {
     tCtx.beginPath();
     tCtx.strokeStyle = line.color;
     tCtx.lineWidth = 1.5;
-    for (let i = 0; i < forceHistory.length; i++) {
-      const x = (i / FORCE_HISTORY_LEN) * w;
+    for (let i = 0; i < plottedHistory.length; i++) {
+      const x = (i / (plottedHistory.length - 1)) * w;
       const y =
         spacingPanelY +
         spacingPanelH -
-        (forceHistory[i][line.key] / maxSpacing) * (spacingPanelH - 4) -
+        (plottedHistory[i][line.key] / maxSpacing) * (spacingPanelH - 4) -
         2;
       if (i === 0) tCtx.moveTo(x, y);
       else tCtx.lineTo(x, y);
@@ -1095,6 +1142,54 @@ function drawTimeline() {
   }
 }
 
+function drawGravityPlot() {
+  const w = gravityPlotCanvas.clientWidth;
+  const h = gravityPlotCanvas.clientHeight;
+  const cx = w * 0.5;
+  const cy = h * 0.5;
+  const radius = Math.min(w, h) * 0.36;
+
+  gPlotCtx.clearRect(0, 0, w, h);
+  gPlotCtx.fillStyle = "rgba(17, 17, 17, 0.92)";
+  gPlotCtx.fillRect(0, 0, w, h);
+
+  gPlotCtx.strokeStyle = "rgba(255, 255, 255, 0.12)";
+  gPlotCtx.lineWidth = 1;
+  gPlotCtx.beginPath();
+  gPlotCtx.moveTo(cx, 10);
+  gPlotCtx.lineTo(cx, h - 10);
+  gPlotCtx.moveTo(10, cy);
+  gPlotCtx.lineTo(w - 10, cy);
+  gPlotCtx.stroke();
+
+  gPlotCtx.beginPath();
+  gPlotCtx.arc(cx, cy, radius, 0, Math.PI * 2);
+  gPlotCtx.stroke();
+
+  for (let i = 0; i < gravityPlotHistory.length; i++) {
+    const sample = gravityPlotHistory[i];
+    const age = (i + 1) / gravityPlotHistory.length;
+    const px = cx + (sample.x / GRAVITY_PLOT_MAX) * radius;
+    const py = cy + (sample.y / GRAVITY_PLOT_MAX) * radius;
+    gPlotCtx.fillStyle = `rgba(255, 140, 66, ${0.15 + age * 0.85})`;
+    gPlotCtx.beginPath();
+    gPlotCtx.arc(
+      px,
+      py,
+      i === gravityPlotHistory.length - 1 ? 5 : 3.5,
+      0,
+      Math.PI * 2,
+    );
+    gPlotCtx.fill();
+  }
+
+  gPlotCtx.fillStyle = "rgba(255, 255, 255, 0.72)";
+  gPlotCtx.font = "10px monospace";
+  gPlotCtx.fillText("gravity", 10, 14);
+  gPlotCtx.fillText("x", w - 16, cy - 4);
+  gPlotCtx.fillText("y", cx + 4, 18);
+}
+
 let frameCount = 0;
 let lastFrameTime = performance.now();
 let simFrameAccumulator = 0;
@@ -1137,8 +1232,13 @@ function render(now: number = performance.now()) {
   params.overlapForceMax = overlapForceMax;
   params.frictionLiquid = frictionLiquid;
   params.frictionGlyph = frictionGlyph;
-  params.gravityX = gravityDirX * gravityStrength;
-  params.gravityY = gravityDirY * gravityStrength;
+  if (tiltGravityEnabled) {
+    params.gravityX = deviceGravityX * gravityMultiplier;
+    params.gravityY = deviceGravityY * gravityMultiplier;
+  } else {
+    params.gravityX = 0;
+    params.gravityY = gravityStrength;
+  }
   params.cursorX = pointerX;
   params.cursorY = pointerY;
   params.cursorVelX = pointerVelX;
@@ -1147,6 +1247,17 @@ function render(now: number = performance.now()) {
   params.cursorForce = cursorForce;
   params.substeps = substeps;
   params.debugDataEnabled = showDebugPanel || !niceRender ? 1 : 0;
+
+  if (tiltGravityEnabled) {
+    gravityPlotHistory.push({ x: deviceGravityX, y: deviceGravityY });
+    if (gravityPlotHistory.length > GRAVITY_PLOT_HISTORY_LEN) {
+      gravityPlotHistory.shift();
+    }
+    drawGravityPlot();
+  } else if (gravityPlotHistory.length > 0) {
+    gravityPlotHistory.length = 0;
+    drawGravityPlot();
+  }
 
   let simSteps = 0;
   while (simFrameAccumulator >= 1 && simSteps < 4) {
@@ -1160,7 +1271,10 @@ function render(now: number = performance.now()) {
     const forces = sim.readForceAverages();
     const spacing = sim.readSpacingStats();
     const speed = sim.readVelocityStats();
-    forceHistory.push({ ...forces, ...spacing });
+    forceHistory.push({
+      ...forces,
+      ...spacing,
+    });
     if (forceHistory.length > FORCE_HISTORY_LEN) forceHistory.shift();
     drawTimeline();
 
@@ -1168,7 +1282,7 @@ function render(now: number = performance.now()) {
       const grid = sim.getGridDiagnostics();
       console.log(
         [
-          `params: stickiness=${stickiness.toFixed(2)} stiffness=${stiffness.toFixed(2)} range=${interactionRange.toFixed(2)} maxForce=${maxForce.toFixed(3)} overlapCap=${overlapForceMax.toFixed(2)} surfTen=${surfaceTension.toFixed(2)} frictionLL=${frictionLiquid.toFixed(2)} frictionLG=${frictionGlyph.toFixed(2)} gravity=(${params.gravityX.toFixed(3)}, ${params.gravityY.toFixed(3)}) strength=${gravityStrength.toFixed(3)}`,
+          `params: stickiness=${stickiness.toFixed(2)} stiffness=${stiffness.toFixed(2)} range=${interactionRange.toFixed(2)} maxForce=${maxForce.toFixed(3)} overlapCap=${overlapForceMax.toFixed(2)} surfTen=${surfaceTension.toFixed(2)} frictionLL=${frictionLiquid.toFixed(2)} frictionLG=${frictionGlyph.toFixed(2)} gravity=(${params.gravityX.toFixed(3)}, ${params.gravityY.toFixed(3)}) strength=${gravityStrength.toFixed(3)} multiplier=${gravityMultiplier.toFixed(1)} rawMotion=(${deviceGravityX.toFixed(2)}, ${deviceGravityY.toFixed(2)})`,
           `forces: total=${forces.total.toFixed(4)} attraction=${forces.attraction.toFixed(4)} repulsion=${forces.repulsion.toFixed(4)} surfaceTension=${forces.surfaceTension.toFixed(4)}`,
           `spacing: meanNN=${spacing.meanNearest.toFixed(3)} minNN=${spacing.minNearest.toFixed(3)}`,
           `speed: mean=${speed.meanSpeed.toFixed(4)} max=${speed.maxSpeed.toFixed(4)}`,
@@ -1198,4 +1312,5 @@ window.addEventListener("resize", () => {
   resizeDensityBuffer();
   updateWordGlyphs();
   if (showDebugPanel) resizeTimeline();
+  resizeGravityPlot();
 });

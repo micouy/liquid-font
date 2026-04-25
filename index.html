@@ -88,10 +88,24 @@
         bottom: 10px;
         z-index: 9;
         width: auto;
-        height: 80px;
+        height: 120px;
         background: #111;
       }
       #timeline.hidden {
+        display: none;
+      }
+      #gravityPlot {
+        position: fixed;
+        right: 10px;
+        bottom: 10px;
+        z-index: 9;
+        width: 150px;
+        height: 150px;
+        background: rgba(17, 17, 17, 0.92);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 10px;
+      }
+      #gravityPlot.hidden {
         display: none;
       }
       #debugToggle {
@@ -234,6 +248,17 @@
             step="0.005"
             value="0.2"
           /><span class="val" id="gravityVal">0.200</span></label
+        >
+        <label
+          ><span>gravity multiplier:</span
+          ><input
+            type="range"
+            id="gravityMultiplier"
+            min="0"
+            max="8"
+            step="0.1"
+            value="0.2"
+          /><span class="val" id="gravityMultiplierVal">0.2</span></label
         >
         <label
           ><span>gravity from device motion:</span
@@ -424,6 +449,7 @@
       </div>
     </div>
     <canvas id="timeline" class="hidden"></canvas>
+    <canvas id="gravityPlot" class="hidden"></canvas>
     <canvas id="canvas"></canvas>
     <script type="module" src="/src/main.ts"></script>
   </body>

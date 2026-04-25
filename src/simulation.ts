@@ -357,7 +357,7 @@ void main() {
   vec2 pos = state.rg;
   vec2 vel = state.ba;
 
-  float fx = 0.0;
+  float fx = u_gravity.x * 0.1;
   float fy = u_gravity.y * 0.1;
 
   float fAttrX = 0.0; float fAttrY = 0.0;
